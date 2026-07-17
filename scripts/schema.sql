@@ -1,0 +1,18 @@
+CREATE TABLE IF NOT EXISTS uploaded_units (
+  id TEXT PRIMARY KEY,
+  year INTEGER NOT NULL,
+  month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+  area TEXT NOT NULL,
+  dotacion TEXT NOT NULL,
+  region TEXT NOT NULL,
+  category TEXT NOT NULL,
+  headcount INTEGER NOT NULL,
+  hires INTEGER NOT NULL,
+  exits INTEGER NOT NULL,
+  employee INTEGER NOT NULL,
+  company INTEGER NOT NULL,
+  desert3 INTEGER NOT NULL,
+  desert6 INTEGER NOT NULL,
+  uploaded_at TIMESTAMPTZ NOT NULL,
+  source_name TEXT NOT NULL
+);
