@@ -30,3 +30,6 @@
 .upload-fields label{min-width:0}
 .upload-fields input{width:100%;min-width:0}
 .worker-rate-card small{color:#fff!important;opacity:1!important}
+
+.comparison-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:4px 0 18px}.comparison-summary article{display:grid;gap:5px;padding:15px 17px;border:1px solid var(--border);border-radius:13px;background:#f8fafc}.comparison-summary span{color:var(--muted);font-size:.7rem;font-weight:800;text-transform:uppercase}.comparison-summary strong{font-size:1.35rem;letter-spacing:-.03em}.comparison-summary small{color:var(--muted);font-size:.7rem}.heat-cell.neutral{border-color:#dbe3e8;color:#465b6a;background:#edf2f5}.heatmap-legend{display:flex;justify-content:flex-end;gap:8px;margin:-4px 0 12px}.heatmap-legend span{padding:5px 8px;border-radius:8px;font-size:.66rem;font-weight:800}.legend-good{color:#087451;background:#e7f8f1}.legend-neutral{color:#465b6a;background:#edf2f5}.legend-alert{color:#a80016;background:#fff0f2}
+@media(max-width:700px){.comparison-summary{grid-template-columns:1fr}.heatmap-legend{justify-content:flex-start;flex-wrap:wrap}}
