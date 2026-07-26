@@ -19,7 +19,7 @@ type Month = {
   desert6: number;
 };
 
-const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const MONTHLY_TARGET = 4;
 type DataRow = UnitRow & { y: number };
 const seedData: DataRow[] = unitData.map((row) => ({ ...row, y: 2026 }));
@@ -96,7 +96,7 @@ export default function Home() {
   const areas = useMemo(() => ["Todas las gerencias / áreas", ...Array.from(new Set(allUnits.map((row) => row.a))).sort()], [allUnits]);
   const groups = useMemo(() => ["Toda la dotación", ...Array.from(new Set(allUnits.map((row) => row.d))).sort()], [allUnits]);
   const availablePeriods = useMemo(() => Array.from(new Set(allUnits.map((row) => `${row.y}-${String(row.m).padStart(2, "0")}`))).sort(), [allUnits]);
-  const data = useMemo(() => availablePeriods.map((key) => {
+  const monthlyData = useMemo(() => availablePeriods.map((key) => {
     const [year, monthNumber] = key.split("-").map(Number);
     const rows = allUnits.filter((r) => r.y === year && r.m === monthNumber && (area === areas[0] || r.a === area) && (group === groups[0] || r.d === group));
     const headcount = rows.reduce((sum, r) => sum + r.h, 0);
@@ -116,7 +116,8 @@ export default function Home() {
       desert3: rows.reduce((sum, r) => sum + r.d3, 0),
       desert6: rows.reduce((sum, r) => sum + r.d6, 0),
     };
-  }).filter((row) => period === "Todos los periodos" || row.key === period), [availablePeriods, allUnits, period, area, group, areas, groups]);
+  }), [availablePeriods, allUnits, area, group, areas, groups]);
+  const data = useMemo(() => monthlyData.filter((row) => period === "Todos los periodos" || row.key === period), [monthlyData, period]);
   const totals = useMemo(() => ({
     hires: data.reduce((a, b) => a + b.hires, 0),
     exits: data.reduce((a, b) => a + b.exits, 0),
@@ -136,6 +137,23 @@ export default function Home() {
   const currentMonth = useMemo(() => data.at(-1) ?? { key: "", year: 0, monthNumber: 0, month: "Sin datos", hires: 0, exits: 0, headcount: 0, turnover: 0, employee: 0, company: 0, desert3: 0, desert6: 0 }, [data]);
   const currentEmployeeRate = currentMonth.headcount ? currentMonth.employee / currentMonth.headcount * 100 : 0;
   const currentCompanyRate = currentMonth.headcount ? currentMonth.company / currentMonth.headcount * 100 : 0;
+  const isAllPeriods = period === "Todos los periodos";
+  const summaryHires = isAllPeriods ? totals.hires : currentMonth.hires;
+  const summaryExits = isAllPeriods ? totals.exits : currentMonth.exits;
+  const summaryHeadcount = isAllPeriods ? totals.headcount : currentMonth.headcount;
+  const summaryTurnover = isAllPeriods ? totals.turnover : currentMonth.turnover;
+  const summaryEmployee = isAllPeriods ? totals.employee : currentMonth.employee;
+  const summaryCompany = isAllPeriods ? totals.company : currentMonth.company;
+  const summaryEmployeeRate = isAllPeriods ? totals.employeeRate : currentEmployeeRate;
+  const summaryCompanyRate = isAllPeriods ? totals.companyRate : currentCompanyRate;
+  const desertionPeriods = useMemo(() => {
+    if (!currentMonth.key) return [];
+    const currentIndex = monthlyData.findIndex((row) => row.key === currentMonth.key);
+    return currentIndex < 0 ? [] : monthlyData.slice(Math.max(0, currentIndex - 2), currentIndex + 1);
+  }, [monthlyData, currentMonth.key]);
+  const hires90 = desertionPeriods.reduce((sum, row) => sum + row.hires, 0);
+  const desert3Count = desertionPeriods.reduce((sum, row) => sum + row.desert3, 0);
+  const desert3Rate = hires90 ? (desert3Count / hires90) * 100 : 0;
   const impactArea = useMemo(() => {
     const selectedPeriods = new Set(data.map((row) => row.key));
     const rows = allUnits.filter((row) => selectedPeriods.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group));
@@ -194,7 +212,7 @@ export default function Home() {
             <h1>Rotación y permanencia</h1>
             <p className="masthead-subtitle">Una lectura ejecutiva de ingresos, ceses, dotación y deserción para tomar decisiones con contexto.</p>
           </div>
-          <div className="source-stamp"><span>ÚLTIMA ACTUALIZACIÓN</span><strong>14 jul 2026</strong></div>
+          <div className="source-stamp"><span>ÚLTIMA ACTUALIZACIÓN</span><strong>14 julio 2026</strong></div>
         </div>
       </header>
 
@@ -209,15 +227,15 @@ export default function Home() {
         <button className="reset-button" onClick={reset}>Limpiar filtros</button>
       </section>
 
-      <div className="section-heading"><div><p className="kicker">DATOS DEL MES EN CURSO</p><h2>{currentMonth.month}</h2></div><p>Los cuadros muestran el último mes disponible dentro de los filtros seleccionados.</p></div>
+      <div className="section-heading"><div><p className="kicker">{isAllPeriods ? "DATOS ACUMULADOS DEL PERIODO" : "DATOS DEL MES"}</p><h2>{isAllPeriods ? "Todos los periodos" : currentMonth.month}</h2></div><p>{isAllPeriods ? "Los eventos se acumulan y la dotación corresponde al promedio mensual del periodo." : "Los cuadros muestran únicamente el mes seleccionado."}</p></div>
 
       <section className="metric-strip">
-        <article><span>Ingresos</span><strong>{currentMonth.hires}</strong><small>eventos del mes</small></article>
-        <article><span>Ceses</span><strong>{currentMonth.exits}</strong><small>eventos del mes</small></article>
-        <article><span>Dotación</span><strong>{currentMonth.headcount.toLocaleString("es-PE")}</strong><small>trabajadores</small></article>
-        <article><span>Rotación total</span><strong>{currentMonth.turnover.toFixed(2)}%</strong><small>resultado del mes</small></article>
-        <article><span>Trabajador</span><strong>{currentEmployeeRate.toFixed(2)}%</strong><small>{currentMonth.employee} ceses · meta 4%</small></article>
-        <article><span>Empresa</span><strong>{currentCompanyRate.toFixed(2)}%</strong><small>{currentMonth.company} ceses</small></article>
+        <article><span>Ingresos</span><strong>{summaryHires}</strong><small>{isAllPeriods ? "eventos acumulados" : "eventos del mes"}</small></article>
+        <article><span>Ceses</span><strong>{summaryExits}</strong><small>{isAllPeriods ? "eventos acumulados" : "eventos del mes"}</small></article>
+        <article><span>Dotación</span><strong>{summaryHeadcount.toLocaleString("es-PE")}</strong><small>{isAllPeriods ? "promedio mensual del periodo" : "promedio del mes"}</small></article>
+        <article><span>Rotación total</span><strong>{summaryTurnover.toFixed(2)}%</strong><small>{isAllPeriods ? "promedio mensual del periodo" : "resultado del mes"}</small></article>
+        <article><span>Rotación no deseada</span><strong>{summaryEmployeeRate.toFixed(2)}%</strong><small>{summaryEmployee} ceses · meta 4%</small></article>
+        <article><span>Empresa</span><strong>{summaryCompanyRate.toFixed(2)}%</strong><small>{summaryCompany} ceses</small></article>
       </section>
 
       <section className="story-card">
@@ -231,23 +249,23 @@ export default function Home() {
           <LineChart data={data} series={[{ key: "turnover", color: "#d6001c", label: "Rotación total", format: "percent" }]} />
         </article>
         <article className="panel">
-          <div className="panel-heading"><div><p className="kicker">ORIGEN DEL CESE</p><h3>Trabajador vs. empresa</h3><p>Compara la causa de salida en el tiempo.</p></div></div>
+          <div className="panel-heading"><div><p className="kicker">ORIGEN DEL CESE</p><h3>No deseada vs. empresa</h3><p>Compara la causa de salida en el tiempo.</p></div></div>
           <div className="segment"><button aria-pressed={view === "porcentaje"} onClick={() => setView("porcentaje")}>Porcentaje</button><button aria-pressed={view === "eventos"} onClick={() => setView("eventos")}>Eventos</button></div>
-          <LineChart data={exitChartData} series={[{ key: "employee", color: "#d6001c", label: "Decisión trabajador", format: view === "porcentaje" ? "percent" : "count" }, { key: "company", color: "#0957c3", label: "Decisión empresa", format: view === "porcentaje" ? "percent" : "count" }]} />
-          <div className="split-summary"><span><i className="red" />Trabajador <strong>{view === "eventos" ? totals.employee : `${totals.employeeRate.toFixed(2)}%`}</strong></span><span><i className="blue" />Empresa <strong>{view === "eventos" ? totals.company : `${totals.companyRate.toFixed(2)}%`}</strong></span></div>
+          <LineChart data={exitChartData} series={[{ key: "employee", color: "#d6001c", label: "No deseada", format: view === "porcentaje" ? "percent" : "count" }, { key: "company", color: "#0957c3", label: "Decisión empresa", format: view === "porcentaje" ? "percent" : "count" }]} />
+          <div className="split-summary"><span><i className="red" />No deseada <strong>{view === "eventos" ? totals.employee : `${totals.employeeRate.toFixed(2)}%`}</strong></span><span><i className="blue" />Empresa <strong>{view === "eventos" ? totals.company : `${totals.companyRate.toFixed(2)}%`}</strong></span></div>
         </article>
       </section>
 
       <section className="panel table-panel">
-        <div className="panel-heading"><div><p className="kicker">DETALLE MENSUAL</p><h3>Rotación total y origen de los ceses</h3><p>La meta se evaluará después, únicamente sobre la rotación por decisión del trabajador.</p></div><span className="badge">{data.length} {data.length === 1 ? "mes" : "meses"}</span></div>
-        <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ingresos</th><th>Ceses</th><th>Dotación prom.</th><th>Rotación total</th><th>Trabajador N°</th><th>Trabajador %</th><th>Empresa N°</th><th>Empresa %</th></tr></thead><tbody>{data.map((d) => <tr key={d.key}><td><strong>{d.month}</strong></td><td>{d.hires}</td><td>{d.exits}</td><td>{d.headcount.toLocaleString("es-PE")}</td><td><span className="rate">{d.turnover.toFixed(2)}%</span></td><td>{d.employee}</td><td><span className="worker-rate">{d.headcount ? ((d.employee / d.headcount) * 100).toFixed(2) : "0.00"}%</span></td><td>{d.company}</td><td><span className="company-rate">{d.headcount ? ((d.company / d.headcount) * 100).toFixed(2) : "0.00"}%</span></td></tr>)}</tbody></table></div>
+        <div className="panel-heading"><div><p className="kicker">DETALLE MENSUAL</p><h3>Rotación total y origen de los ceses</h3><p>La meta se evaluará después, únicamente sobre la rotación no deseada.</p></div><span className="badge">{data.length} {data.length === 1 ? "mes" : "meses"}</span></div>
+        <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ingresos</th><th>Ceses</th><th>Dotación prom.</th><th>Rotación total</th><th>No deseada N°</th><th>No deseada %</th><th>Empresa N°</th><th>Empresa %</th></tr></thead><tbody>{data.map((d) => <tr key={d.key}><td><strong>{d.month}</strong></td><td>{d.hires}</td><td>{d.exits}</td><td>{d.headcount.toLocaleString("es-PE")}</td><td><span className="rate">{d.turnover.toFixed(2)}%</span></td><td>{d.employee}</td><td><span className="worker-rate">{d.headcount ? ((d.employee / d.headcount) * 100).toFixed(2) : "0.00"}%</span></td><td>{d.company}</td><td><span className="company-rate">{d.headcount ? ((d.company / d.headcount) * 100).toFixed(2) : "0.00"}%</span></td></tr>)}</tbody></table></div>
       </section>
 
       <section className="worker-analysis panel">
-        <div className="panel-heading"><div><p className="kicker">ANÁLISIS DE ROTACIÓN DEL TRABAJADOR</p><h3>Meta, deserción e impacto organizacional</h3><p>La referencia mensual de 4% se compara exclusivamente con los ceses por decisión del trabajador.</p></div><span className={totals.employeeRate <= MONTHLY_TARGET ? "goal-ok" : "goal-alert"}>{totals.employeeRate <= MONTHLY_TARGET ? "Dentro de meta" : "Supera la meta"}</span></div>
+        <div className="panel-heading"><div><p className="kicker">ANÁLISIS DE ROTACIÓN NO DESEADA</p><h3>Meta, deserción e impacto organizacional</h3><p>La referencia mensual de 4% se compara exclusivamente con los ceses por decisión del trabajador.</p></div><span className={totals.employeeRate <= MONTHLY_TARGET ? "goal-ok" : "goal-alert"}>{totals.employeeRate <= MONTHLY_TARGET ? "Dentro de meta" : "Supera la meta"}</span></div>
         <div className="worker-analysis-grid">
-          <article className="worker-rate-card"><span>Rotación del trabajador</span><strong>{totals.employeeRate.toFixed(2)}%</strong><small>{totals.employee} ceses ÷ dotación promedio mensual · meta ≤ 4%</small></article>
-          <article><span>Deserción &lt;3 meses</span><strong>{totals.desert3} <small>· {totals.employee ? (totals.desert3 / totals.employee * 100).toFixed(2) : "0.00"}%</small></strong><p>Salidas del trabajador antes de 3 meses ÷ total de salidas del trabajador.</p></article>
+          <article className="worker-rate-card"><span>Rotación no deseada</span><strong>{totals.employeeRate.toFixed(2)}%</strong><small>{totals.employee} ceses ÷ dotación promedio mensual · meta ≤ 4%</small></article>
+          <article><span>Deserción &lt;3 meses</span><strong>{desert3Count} <small>· {desert3Rate.toFixed(2)}%</small></strong><p>{desert3Count} salidas antes de 3 meses ÷ {hires90} ingresos de los últimos 90 días.</p></article>
           <article><span>Deserción hasta 6 meses</span><strong>{totals.desert6} <small>· {totals.employee ? (totals.desert6 / totals.employee * 100).toFixed(2) : "0.00"}%</small></strong><p>Acumulado hasta 6 meses ÷ total de salidas del trabajador.</p></article>
           <article><span>Área de mayor impacto</span><strong className="impact-name">{impactArea?.name ?? "Sin datos"}</strong><p>{impactArea ? `${impactArea.exits} ceses · ${impactArea.rate.toFixed(2)}% de rotación · ${impactArea.contribution.toFixed(1)}% de los ceses del trabajador` : "No hay ceses por decisión del trabajador en la selección."}</p></article>
         </div>
@@ -255,19 +273,19 @@ export default function Home() {
 
       <section className="review-panel panel">
         <div className="panel-heading"><div><p className="kicker">FOCO DE GESTIÓN</p><h3>Principales áreas a revisar</h3><p>Áreas con más ceses por decisión del trabajador en el último mes mostrado.</p></div><span className="period-chip">{currentMonth.month}</span></div>
-        <div className="review-table"><div className="review-head"><span>Área</span><span>Dotación</span><span>Ceses trabajador</span><span>Rotación</span><span>Variación mensual</span></div>{reviewAreas.length ? reviewAreas.map((item) => <article key={item.area} className="review-row"><div><strong>{item.area}</strong><small>{item.group}</small></div><span>{item.headcount.toLocaleString("es-PE")}</span><span>{item.exits}</span><span><b className={item.rate > MONTHLY_TARGET ? "review-alert" : "review-ok"}>{item.rate.toFixed(2)}%</b></span><span>{item.variation === null ? <b className="review-neutral">Sin base</b> : <b className={item.variation > 0 ? "review-alert" : "review-ok"}>{item.variation > 0 ? "↗" : item.variation < 0 ? "↘" : "→"} {Math.abs(item.variation).toFixed(2)} pp</b>}</span></article>) : <p className="empty-review">No hay ceses por decisión del trabajador en el último mes seleccionado.</p>}</div>
+        <div className="review-table"><div className="review-head"><span>Área</span><span>Dotación</span><span>Ceses no deseados</span><span>Rotación</span><span>Variación mensual</span></div>{reviewAreas.length ? reviewAreas.map((item) => <article key={item.area} className="review-row"><div><strong>{item.area}</strong><small>{item.group}</small></div><span>{item.headcount.toLocaleString("es-PE")}</span><span>{item.exits}</span><span><b className={item.rate > MONTHLY_TARGET ? "review-alert" : "review-ok"}>{item.rate.toFixed(2)}%</b></span><span>{item.variation === null ? <b className="review-neutral">Sin base</b> : <b className={item.variation > 0 ? "review-alert" : "review-ok"}>{item.variation > 0 ? "↗" : item.variation < 0 ? "↘" : "→"} {Math.abs(item.variation).toFixed(2)} pp</b>}</span></article>) : <p className="empty-review">No hay ceses por decisión del trabajador en el último mes seleccionado.</p>}</div>
       </section>
 
       <section className="panel heatmap-panel">
-        <div className="panel-heading"><div><p className="kicker">ÚLTIMO MES · {monthLabel(latestYear, latestMonth).toUpperCase()}</p><h3>Mapa de calor por regiones y ciudades</h3><p>Vista inicial: gerencia por región. Haz clic en una gerencia para ingresar al detalle de ciudad/sucursal y área. El color representa la rotación del trabajador.</p></div><span className="badge">Meta trabajador 4%</span></div>
+        <div className="panel-heading"><div><p className="kicker">ÚLTIMO MES · {monthLabel(latestYear, latestMonth).toUpperCase()}</p><h3>Mapa de calor por regiones y ciudades</h3><p>Vista inicial: gerencia por región. Haz clic en una gerencia para ingresar al detalle de ciudad/sucursal y área. El color representa la rotación no deseada.</p></div><span className="badge">Meta no deseada 4%</span></div>
         <div className="heatmap-scroll"><div className="heatmap-grid" style={{ gridTemplateColumns: `minmax(230px, 1.5fr) repeat(${heatmapRegions.length}, minmax(92px, 1fr))` }}>
           <div className="heat-corner">Gerencia ↓ / Región →</div>{heatmapRegions.map((region) => <div className="heat-region" key={region}>{region}</div>)}
           {heatmapAreas.map((gerencia) => <div className="heat-row" key={gerencia} style={{ display: "contents" }}><button className={heatmapArea === gerencia ? "heat-area active" : "heat-area"} onClick={() => setHeatmapArea(heatmapArea === gerencia ? null : gerencia)}>{gerencia}</button>{heatmapRegions.map((region) => { const value = heatmapValue(gerencia, region); return <div key={`${gerencia}-${region}`} className={value === null ? "heat-cell empty" : value <= MONTHLY_TARGET ? "heat-cell good" : "heat-cell alert"}>{value === null ? "—" : `${value.toFixed(2)}%`}</div>; })}</div>)}
         </div></div>
-        {heatmapArea && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">NIVEL INTERNO · CIUDAD / SUCURSAL / ÁREA</p><h3>{heatmapArea}</h3></div><button onClick={() => setHeatmapArea(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Región / ciudad</th><th>Sucursal / dotación</th><th>Área / categoría</th><th>Dotación</th><th>Ceses trabajador</th><th>Rotación trabajador</th><th>Meta trabajador</th></tr></thead><tbody>{heatmapDetail.map((row, index) => { const rate = row.h ? row.v / row.h * 100 : 0; return <tr key={`${row.r}-${row.q}-${row.d}-${index}`}><td>{row.r}</td><td>{row.d}</td><td>{row.q}</td><td>{row.h}</td><td>{row.v}</td><td><span className="worker-rate">{rate.toFixed(2)}%</span></td><td><span className={rate <= MONTHLY_TARGET ? "goal-ok" : "goal-alert"}>{rate <= MONTHLY_TARGET ? "Dentro de meta" : "Supera 4%"}</span></td></tr>; })}</tbody></table></div></div>}
+        {heatmapArea && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">NIVEL INTERNO · CIUDAD / SUCURSAL / ÁREA</p><h3>{heatmapArea}</h3></div><button onClick={() => setHeatmapArea(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Región / ciudad</th><th>Sucursal / dotación</th><th>Área / categoría</th><th>Dotación</th><th>Ceses no deseados</th><th>Rotación no deseada</th><th>Meta no deseada</th></tr></thead><tbody>{heatmapDetail.map((row, index) => { const rate = row.h ? row.v / row.h * 100 : 0; return <tr key={`${row.r}-${row.q}-${row.d}-${index}`}><td>{row.r}</td><td>{row.d}</td><td>{row.q}</td><td>{row.h}</td><td>{row.v}</td><td><span className="worker-rate">{rate.toFixed(2)}%</span></td><td><span className={rate <= MONTHLY_TARGET ? "goal-ok" : "goal-alert"}>{rate <= MONTHLY_TARGET ? "Dentro de meta" : "Supera 4%"}</span></td></tr>; })}</tbody></table></div></div>}
       </section>
 
-      <details className="methodology"><summary>¿Qué se calcula en cada tasa?</summary><div><p><strong>Rotación total:</strong> ((ingresos + ceses) ÷ 2) ÷ dotación promedio × 100. Es descriptiva y no se compara con la meta.</p><p><strong>Rotación por trabajador:</strong> ceses por decisión del trabajador ÷ dotación promedio × 100. Solo esta tasa se compara con la meta mensual de 4%.</p><p><strong>Deserción:</strong> salidas por decisión del trabajador antes de 3 meses o acumuladas hasta 6 meses ÷ total de salidas por decisión del trabajador × 100.</p></div></details>
+      <details className="methodology"><summary>¿Qué se calcula en cada tasa?</summary><div><p><strong>Rotación total:</strong> ((ingresos + ceses) ÷ 2) ÷ dotación promedio × 100. Es descriptiva y no se compara con la meta.</p><p><strong>Rotación no deseada:</strong> ceses por decisión del trabajador ÷ dotación promedio × 100. Solo esta tasa se compara con la meta mensual de 4%.</p><p><strong>Deserción &lt;3 meses:</strong> salidas antes de 3 meses ÷ ingresos de los últimos 90 días × 100. La deserción acumulada hasta 6 meses conserva como referencia las salidas por decisión del trabajador.</p></div></details>
       <footer>Fuente: planillas mensuales y términos de contrato · Último periodo: {monthLabel(latestYear, latestMonth)}</footer>
     </div>
   </main>;
