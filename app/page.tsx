@@ -93,7 +93,7 @@ export default function Home() {
   const [area, setArea] = useState("Todas las gerencias / áreas");
   const [group, setGroup] = useState("Toda la dotación");
   const [view, setView] = useState<"porcentaje" | "eventos">("porcentaje");
-  const [heatmapArea, setHeatmapArea] = useState<string | null>(null);
+  const [heatmapFocus, setHeatmapFocus] = useState<{ area: string; region: string } | null>(null);
   const [uploadedRows, setUploadedRows] = useState<DataRow[]>([]);
   const refreshUploaded = async () => {
     const response = await fetch("/api/uploaded-data", { cache: "no-store" });
@@ -261,9 +261,14 @@ export default function Home() {
 
   const latestPeriod = availablePeriods.filter((key) => key.startsWith(`${currentYear}-`)).at(-1) ?? `${currentYear}-01`;
   const [latestYear, latestMonth] = latestPeriod.split("-").map(Number);
+  const heatmapPeriods = period === "Todos los periodos" ? availablePeriods : [period];
+  const heatmapPeriodSet = new Set(heatmapPeriods);
+  const heatmapPeriodLabel = period === "Todos los periodos"
+    ? `Promedio mensual · ${heatmapPeriods.length} periodos`
+    : (() => { const [year, month] = period.split("-").map(Number); return monthLabel(year, month); })();
   const geographyRows = allUnits.filter((row) => (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group));
-  const geographyMetric = (year: number, month: number, region: string, city?: string) => {
-    const matches = (row: DataRow, targetYear: number, targetMonth: number) => row.y === targetYear && row.m === targetMonth && macroRegionFor(row) === region && (!city || row.r === city);
+  const geographyMetric = (year: number, month: number, region: string, focusArea: string, city?: string) => {
+    const matches = (row: DataRow, targetYear: number, targetMonth: number) => row.y === targetYear && row.m === targetMonth && row.a === focusArea && macroRegionFor(row) === region && (!city || row.r === city);
     const rows = geographyRows.filter((row) => matches(row, year, month));
     if (!rows.length) return null;
     const previousYear = month === 1 ? year - 1 : year;
@@ -278,24 +283,34 @@ export default function Home() {
     const employee = rows.reduce((sum, row) => sum + row.v, 0);
     return { headcount, employee, rate: headcount ? employee / headcount * 100 : 0 };
   };
-  const regionMonths = comparisonData.map((row) => row.monthNumber);
-  const regionalComparison = MACRO_REGIONS.map((region) => ({
-    region,
-    values: regionMonths.map((month) => {
-      const current = geographyMetric(currentYear, month, region);
-      const benchmark = geographyMetric(comparisonYear, month, region);
-      return { month, current, benchmark, gap: current && benchmark ? current.rate - benchmark.rate : null };
-    }),
+  const summarizeGeography = (region: string, focusArea: string, city?: string) => {
+    const metrics = heatmapPeriods.map((key) => {
+      const [year, month] = key.split("-").map(Number);
+      return geographyMetric(year, month, region, focusArea, city);
+    }).filter((value): value is NonNullable<typeof value> => value !== null);
+    if (!metrics.length) return null;
+    return {
+      headcount: metrics.reduce((sum, value) => sum + value.headcount, 0) / metrics.length,
+      employee: metrics.reduce((sum, value) => sum + value.employee, 0),
+      rate: metrics.reduce((sum, value) => sum + value.rate, 0) / metrics.length,
+      months: metrics.length,
+    };
+  };
+  const heatmapAreas = Array.from(new Set(geographyRows
+    .filter((row) => heatmapPeriodSet.has(`${row.y}-${String(row.m).padStart(2, "0")}`))
+    .map((row) => row.a))).sort();
+  const heatmapMatrix = heatmapAreas.map((focusArea) => ({
+    area: focusArea,
+    values: MACRO_REGIONS.map((region) => ({ region, metric: summarizeGeography(region, focusArea) })),
   }));
-  const cityComparison = heatmapArea ? Array.from(new Set(geographyRows
-    .filter((row) => row.y === latestYear && row.m === latestMonth && macroRegionFor(row) === heatmapArea)
-    .map((row) => row.r))).sort().map((city) => {
-      const current = geographyMetric(currentYear, latestMonth, heatmapArea, city);
-      const benchmark = geographyMetric(comparisonYear, latestMonth, heatmapArea, city);
-      return { city, current, benchmark, gap: current && benchmark ? current.rate - benchmark.rate : null };
-    }) : [];
+  const cityFocus = heatmapFocus ? Array.from(new Set(geographyRows
+    .filter((row) => heatmapPeriodSet.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && row.a === heatmapFocus.area && macroRegionFor(row) === heatmapFocus.region)
+    .map((row) => row.r))).sort().map((city) => ({
+      city,
+      metric: summarizeGeography(heatmapFocus.region, heatmapFocus.area, city),
+    })).filter((item) => item.metric).sort((a, b) => (b.metric?.rate ?? 0) - (a.metric?.rate ?? 0)) : [];
 
-  const reset = () => { setPeriod("Todos los periodos"); setArea(areas[0]); setGroup(groups[0]); setHeatmapArea(null); };
+  const reset = () => { setPeriod("Todos los periodos"); setArea(areas[0]); setGroup(groups[0]); setHeatmapFocus(null); };
   return <main className="app-shell">
     <div className="dashboard">
       <header className="masthead">
@@ -317,9 +332,9 @@ export default function Home() {
 
       <section className="filter-bar" aria-label="Filtros del dashboard">
         <div className="filters">
-          <label>Periodo<select value={period} onChange={(e) => setPeriod(e.target.value)}><option>Todos los periodos</option>{availablePeriods.map((key) => { const [year, month] = key.split("-").map(Number); return <option key={key} value={key}>{monthLabel(year, month)}</option>; })}</select></label>
-          <label>Gerencia / área<select value={area} onChange={(e) => setArea(e.target.value)}>{areas.map((v) => <option key={v}>{v}</option>)}</select></label>
-          <label>Grupo de dotación<select value={group} onChange={(e) => setGroup(e.target.value)}>{groups.map((v) => <option key={v}>{v}</option>)}</select></label>
+          <label>Periodo<select value={period} onChange={(e) => { setPeriod(e.target.value); setHeatmapFocus(null); }}><option>Todos los periodos</option>{availablePeriods.map((key) => { const [year, month] = key.split("-").map(Number); return <option key={key} value={key}>{monthLabel(year, month)}</option>; })}</select></label>
+          <label>Gerencia / área<select value={area} onChange={(e) => { setArea(e.target.value); setHeatmapFocus(null); }}>{areas.map((v) => <option key={v}>{v}</option>)}</select></label>
+          <label>Grupo de dotación<select value={group} onChange={(e) => { setGroup(e.target.value); setHeatmapFocus(null); }}>{groups.map((v) => <option key={v}>{v}</option>)}</select></label>
         </div>
         <button className="reset-button" onClick={reset}>Limpiar filtros</button>
       </section>
@@ -379,13 +394,13 @@ export default function Home() {
       </section>
 
       <section className="panel heatmap-panel">
-        <div className="panel-heading"><div><p className="kicker">COMPARATIVO TERRITORIAL</p><h3>Mapa de calor por macroregión</h3><p>{hasBenchmark ? `Brecha de rotación no deseada: ${currentYear} frente a ${comparisonYear}. Seleccione una región para ver sus ciudades.` : `La agrupación Norte, Sur, Centro y Oriente está lista. Al cargar ${comparisonYear} se activará la brecha interanual.`}</p></div><span className="badge">{hasBenchmark ? "Brecha interanual" : "Preparado para benchmark"}</span></div>
-        <div className="heatmap-legend"><span className="legend-good">Mejora</span><span className="legend-neutral">Sin comparación</span><span className="legend-alert">Mayor rotación</span></div>
-        <div className="heatmap-scroll"><div className="heatmap-grid" style={{ gridTemplateColumns: `minmax(190px, 1.25fr) repeat(${Math.max(regionMonths.length, 1)}, minmax(105px, 1fr))` }}>
-          <div className="heat-corner">Macroregión ↓ / Mes →</div>{regionMonths.length ? regionMonths.map((month) => <div className="heat-region" key={month}>{monthNames[month - 1]}</div>) : <div className="heat-region">Sin datos</div>}
-          {regionalComparison.map((item) => <div className="heat-row" key={item.region} style={{ display: "contents" }}><button className={heatmapArea === item.region ? "heat-area active" : "heat-area"} onClick={() => setHeatmapArea(heatmapArea === item.region ? null : item.region)}>{item.region}</button>{item.values.length ? item.values.map((value) => <div key={`${item.region}-${value.month}`} className={!value.current ? "heat-cell empty" : value.gap === null ? "heat-cell neutral" : value.gap <= 0 ? "heat-cell good" : "heat-cell alert"}>{!value.current ? "—" : value.gap === null ? `${value.current.rate.toFixed(2)}%` : `${value.gap >= 0 ? "+" : ""}${value.gap.toFixed(2)} pp`}</div>) : <div className="heat-cell empty">—</div>}</div>)}
+        <div className="panel-heading"><div><p className="kicker">FOCO TERRITORIAL Y ORGANIZACIONAL</p><h3>Mapa de calor por región y gerencia</h3><p>{period === "Todos los periodos" ? "Cada celda muestra el promedio de las tasas mensuales del periodo." : "Cada celda muestra la rotación no deseada del mes seleccionado."} Seleccione una celda para revisar sus ciudades.</p></div><span className="badge">{heatmapPeriodLabel}</span></div>
+        <div className="heatmap-legend"><span className="legend-good">Dentro de meta ≤ 4%</span><span className="legend-neutral">Sin información</span><span className="legend-alert">Requiere foco &gt; 4%</span></div>
+        <div className="heatmap-scroll"><div className="heatmap-grid focus-grid" style={{ gridTemplateColumns: `minmax(250px, 1.5fr) repeat(${MACRO_REGIONS.length}, minmax(115px, 1fr))` }}>
+          <div className="heat-corner">Gerencia ↓ / Región →</div>{MACRO_REGIONS.map((region) => <div className="heat-region" key={region}>{region}</div>)}
+          {heatmapMatrix.length ? heatmapMatrix.map((item) => <div className="heat-row" key={item.area} style={{ display: "contents" }}><div className="heat-area heat-area-label">{item.area}</div>{item.values.map((value) => <button key={`${item.area}-${value.region}`} type="button" disabled={!value.metric} className={!value.metric ? "heat-cell empty" : value.metric.rate <= MONTHLY_TARGET ? "heat-cell good" : "heat-cell alert"} onClick={() => value.metric && setHeatmapFocus({ area: item.area, region: value.region })}>{value.metric ? `${value.metric.rate.toFixed(2)}%` : "—"}</button>)}</div>) : <div className="heat-cell empty">Sin información</div>}
         </div></div>
-        {heatmapArea && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR CIUDAD · {monthNames[latestMonth - 1].toUpperCase()} {currentYear}</p><h3>Región {heatmapArea}</h3></div><button onClick={() => setHeatmapArea(null)}>Volver a regiones</button></div><div className="table-wrap"><table><thead><tr><th>Ciudad</th><th>Dotación prom. {currentYear}</th><th>Ceses no deseados</th><th>Rotación {currentYear}</th><th>Rotación {comparisonYear}</th><th>Brecha interanual</th></tr></thead><tbody>{cityComparison.length ? cityComparison.map((item) => <tr key={item.city}><td><strong>{item.city}</strong></td><td>{item.current?.headcount.toLocaleString("es-PE") ?? "—"}</td><td>{item.current?.employee ?? "—"}</td><td><span className="worker-rate">{item.current ? `${item.current.rate.toFixed(2)}%` : "—"}</span></td><td>{item.benchmark ? `${item.benchmark.rate.toFixed(2)}%` : "Pendiente"}</td><td><span className={item.gap === null ? "review-neutral" : item.gap <= 0 ? "review-ok" : "review-alert"}>{item.gap === null ? "Sin base" : `${item.gap >= 0 ? "+" : ""}${item.gap.toFixed(2)} pp`}</span></td></tr>) : <tr><td colSpan={6}>No hay ciudades disponibles para esta región.</td></tr>}</tbody></table></div></div>}
+        {heatmapFocus && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR CIUDAD · {heatmapPeriodLabel.toUpperCase()}</p><h3>{heatmapFocus.area} · Región {heatmapFocus.region}</h3></div><button onClick={() => setHeatmapFocus(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Ciudad</th><th>Dotación promedio</th><th>Ceses no deseados</th><th>{period === "Todos los periodos" ? "Rotación promedio" : "Rotación del mes"}</th><th>Evaluación</th></tr></thead><tbody>{cityFocus.length ? cityFocus.map((item) => <tr key={item.city}><td><strong>{item.city}</strong></td><td>{item.metric?.headcount.toLocaleString("es-PE") ?? "—"}</td><td>{item.metric?.employee ?? "—"}</td><td><span className="worker-rate">{item.metric ? `${item.metric.rate.toFixed(2)}%` : "—"}</span></td><td><span className={!item.metric ? "review-neutral" : item.metric.rate <= MONTHLY_TARGET ? "review-ok" : "review-alert"}>{!item.metric ? "Sin información" : item.metric.rate <= MONTHLY_TARGET ? "Dentro de meta" : "Requiere foco"}</span></td></tr>) : <tr><td colSpan={5}>No hay ciudades disponibles para esta selección.</td></tr>}</tbody></table></div></div>}
       </section>
 
       <details className="methodology"><summary>¿Qué se calcula en cada tasa?</summary><div><p><strong>Dotación promedio mensual:</strong> (dotación al inicio del mes + dotación al cierre del mes) ÷ 2. Si no existe el mes anterior, el inicio se reconstruye con cierre − ingresos + ceses.</p><p><strong>Rotación total:</strong> ceses del periodo ÷ dotación promedio × 100. La rotación no deseada y la rotación deseada usan, respectivamente, sus ceses sobre el mismo denominador.</p><p><strong>Deserción:</strong> salidas tempranas de la ventana ÷ ingresos de la misma ventana × 100. La ventana de 3 meses usa los últimos 90 días y la de 6 meses los últimos 180 días; ambas cambian con el mes analizado.</p></div></details>
