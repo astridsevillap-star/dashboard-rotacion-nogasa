@@ -15,6 +15,7 @@ type Month = {
   headcountEnd: number;
   headcount: number;
   turnover: number;
+  benchmark: number;
   employee: number;
   company: number;
   desert3: number;
@@ -25,6 +26,20 @@ const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Juli
 const MONTHLY_TARGET = 4;
 type DataRow = UnitRow & { y: number };
 const seedData: DataRow[] = unitData.map((row) => ({ ...row, y: 2026 }));
+const MACRO_REGIONS = ["Norte", "Sur", "Centro", "Oriente"] as const;
+const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+const macroRegionFor = (row: DataRow) => {
+  const named = plain(row.g ?? "");
+  if (named.includes("NORTE")) return "Norte";
+  if (named.includes("SUR")) return "Sur";
+  if (named.includes("ORIENTE") || named.includes("SELVA")) return "Oriente";
+  if (named.includes("CENTRO")) return "Centro";
+  const place = plain(row.r);
+  if (["IQUITOS","PUCALLPA","TARAPOTO","MOYOBAMBA","JUANJUI","TINGO MARIA","PUERTO MALDONADO","LA MERCED"].some((name) => place.includes(name))) return "Oriente";
+  if (["AREQUIPA","CUSCO","PUNO","TACNA","MOQUEGUA","ICA","AYACUCHO"].some((name) => place.includes(name))) return "Sur";
+  if (["TUMBES","PIURA","SULLANA","TALARA","CHICLAYO","LAMBAYEQUE","TRUJILLO","CHIMBOTE","HUARAZ","CAJAMARCA","JAEN"].some((name) => place.includes(name))) return "Norte";
+  return "Centro";
+};
 const monthLabel = (year: number, month: number) => `${monthNames[month - 1]} ${String(year).slice(-2)}`;
 const smoothPath = (points: Array<{ x: number; y: number }>) => {
   if (!points.length) return "";
@@ -125,12 +140,25 @@ export default function Home() {
       headcountEnd,
       headcount,
       turnover: headcount ? (exits / headcount) * 100 : 0,
+      benchmark: 0,
       employee: rows.reduce((sum, row) => sum + row.v, 0),
       company: rows.reduce((sum, row) => sum + row.x, 0),
       desert3: rows.reduce((sum, row) => sum + row.d3, 0),
       desert6: rows.reduce((sum, row) => sum + row.d6, 0),
     };
   }), [availablePeriods, allUnits, area, group, areas, groups]);
+  const availableYears = useMemo(() => Array.from(new Set(monthlyData.map((row) => row.year))).sort((a, b) => a - b), [monthlyData]);
+  const currentYear = availableYears.at(-1) ?? 2026;
+  const comparisonYear = currentYear - 1;
+  const currentYearData = useMemo(() => monthlyData.filter((row) => row.year === currentYear), [monthlyData, currentYear]);
+  const benchmarkByMonth = useMemo(() => new Map(monthlyData.filter((row) => row.year === comparisonYear).map((row) => [row.monthNumber, row])), [monthlyData, comparisonYear]);
+  const hasBenchmark = benchmarkByMonth.size > 0;
+  const comparisonData = useMemo(() => currentYearData
+    .filter((row) => !hasBenchmark || benchmarkByMonth.has(row.monthNumber))
+    .map((row) => ({ ...row, month: monthNames[row.monthNumber - 1], benchmark: benchmarkByMonth.get(row.monthNumber)?.turnover ?? 0 })),
+  [currentYearData, benchmarkByMonth, hasBenchmark]);
+  const comparisonLatest = comparisonData.at(-1);
+  const comparisonGap = hasBenchmark && comparisonLatest ? comparisonLatest.turnover - comparisonLatest.benchmark : null;
   const data = useMemo(() => monthlyData.filter((row) => period === "Todos los periodos" || row.key === period), [monthlyData, period]);
   const totals = useMemo(() => {
     const headcountExposure = data.reduce((sum, row) => sum + row.headcount, 0);
@@ -152,21 +180,21 @@ export default function Home() {
     };
   }, [data]);
   const evolutionTotals = useMemo(() => {
-    const headcountExposure = monthlyData.reduce((sum, row) => sum + row.headcount, 0);
-    const employee = monthlyData.reduce((sum, row) => sum + row.employee, 0);
-    const company = monthlyData.reduce((sum, row) => sum + row.company, 0);
+    const headcountExposure = currentYearData.reduce((sum, row) => sum + row.headcount, 0);
+    const employee = currentYearData.reduce((sum, row) => sum + row.employee, 0);
+    const company = currentYearData.reduce((sum, row) => sum + row.company, 0);
     return {
       employee,
       company,
       employeeRate: headcountExposure ? employee / headcountExposure * 100 : 0,
       companyRate: headcountExposure ? company / headcountExposure * 100 : 0,
     };
-  }, [monthlyData]);
-  const exitChartData = useMemo(() => monthlyData.map((row) => {
+  }, [currentYearData]);
+  const exitChartData = useMemo(() => currentYearData.map((row) => {
     if (view === "eventos") return row;
     return { ...row, employee: row.headcount ? (row.employee / row.headcount) * 100 : 0, company: row.headcount ? (row.company / row.headcount) * 100 : 0 };
-  }), [monthlyData, view]);
-  const currentMonth = useMemo(() => data.at(-1) ?? { key: "", year: 0, monthNumber: 0, month: "Sin datos", hires: 0, exits: 0, headcountStart: 0, headcountEnd: 0, headcount: 0, turnover: 0, employee: 0, company: 0, desert3: 0, desert6: 0 }, [data]);
+  }), [currentYearData, view]);
+  const currentMonth = useMemo(() => data.at(-1) ?? { key: "", year: 0, monthNumber: 0, month: "Sin datos", hires: 0, exits: 0, headcountStart: 0, headcountEnd: 0, headcount: 0, turnover: 0, benchmark: 0, employee: 0, company: 0, desert3: 0, desert6: 0 }, [data]);
   const currentEmployeeRate = currentMonth.headcount ? currentMonth.employee / currentMonth.headcount * 100 : 0;
   const currentCompanyRate = currentMonth.headcount ? currentMonth.company / currentMonth.headcount * 100 : 0;
   const isAllPeriods = period === "Todos los periodos";
@@ -231,18 +259,41 @@ export default function Home() {
     }).filter((item) => item.exits > 0).sort((a, b) => b.exits - a.exits || b.rate - a.rate).slice(0, 5);
   }, [currentMonth, data, allUnits, area, group, areas, groups]);
 
-  const latestPeriod = availablePeriods.at(-1) ?? "2026-06";
+  const latestPeriod = availablePeriods.filter((key) => key.startsWith(`${currentYear}-`)).at(-1) ?? `${currentYear}-01`;
   const [latestYear, latestMonth] = latestPeriod.split("-").map(Number);
-  const heatmapRows = useMemo(() => allUnits.filter((row) => row.y === latestYear && row.m === latestMonth && (group === groups[0] || row.d === group)), [allUnits, latestYear, latestMonth, group, groups]);
-  const heatmapAreas = useMemo(() => Array.from(new Set(heatmapRows.map((row) => row.a))).sort(), [heatmapRows]);
-  const heatmapRegions = useMemo(() => Array.from(new Set(heatmapRows.map((row) => row.r))).sort(), [heatmapRows]);
-  const heatmapValue = (gerencia: string, region: string) => {
-    const rows = heatmapRows.filter((row) => row.a === gerencia && row.r === region);
-    const headcount = rows.reduce((sum, row) => sum + row.h, 0);
-    const workerExits = rows.reduce((sum, row) => sum + row.v, 0);
-    return headcount ? (workerExits / headcount) * 100 : null;
+  const geographyRows = allUnits.filter((row) => (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group));
+  const geographyMetric = (year: number, month: number, region: string, city?: string) => {
+    const matches = (row: DataRow, targetYear: number, targetMonth: number) => row.y === targetYear && row.m === targetMonth && macroRegionFor(row) === region && (!city || row.r === city);
+    const rows = geographyRows.filter((row) => matches(row, year, month));
+    if (!rows.length) return null;
+    const previousYear = month === 1 ? year - 1 : year;
+    const previousMonth = month === 1 ? 12 : month - 1;
+    const previousRows = geographyRows.filter((row) => matches(row, previousYear, previousMonth));
+    const headcountEnd = rows.reduce((sum, row) => sum + row.h, 0);
+    const hires = rows.reduce((sum, row) => sum + row.i, 0);
+    const exits = rows.reduce((sum, row) => sum + row.c, 0);
+    const previousEnd = previousRows.reduce((sum, row) => sum + row.h, 0);
+    const headcountStart = previousRows.length ? previousEnd : Math.max(0, headcountEnd - hires + exits);
+    const headcount = (headcountStart + headcountEnd) / 2;
+    const employee = rows.reduce((sum, row) => sum + row.v, 0);
+    return { headcount, employee, rate: headcount ? employee / headcount * 100 : 0 };
   };
-  const heatmapDetail = useMemo(() => heatmapArea ? heatmapRows.filter((row) => row.a === heatmapArea).sort((a, b) => a.r.localeCompare(b.r) || a.q.localeCompare(b.q)) : [], [heatmapArea, heatmapRows]);
+  const regionMonths = comparisonData.map((row) => row.monthNumber);
+  const regionalComparison = MACRO_REGIONS.map((region) => ({
+    region,
+    values: regionMonths.map((month) => {
+      const current = geographyMetric(currentYear, month, region);
+      const benchmark = geographyMetric(comparisonYear, month, region);
+      return { month, current, benchmark, gap: current && benchmark ? current.rate - benchmark.rate : null };
+    }),
+  }));
+  const cityComparison = heatmapArea ? Array.from(new Set(geographyRows
+    .filter((row) => row.y === latestYear && row.m === latestMonth && macroRegionFor(row) === heatmapArea)
+    .map((row) => row.r))).sort().map((city) => {
+      const current = geographyMetric(currentYear, latestMonth, heatmapArea, city);
+      const benchmark = geographyMetric(comparisonYear, latestMonth, heatmapArea, city);
+      return { city, current, benchmark, gap: current && benchmark ? current.rate - benchmark.rate : null };
+    }) : [];
 
   const reset = () => { setPeriod("Todos los periodos"); setArea(areas[0]); setGroup(groups[0]); setHeatmapArea(null); };
   return <main className="app-shell">
@@ -286,11 +337,16 @@ export default function Home() {
 
       <section className="evolution-stack">
         <article className="panel">
-          <div className="panel-heading"><div><p className="kicker">EVOLUCIÓN HISTÓRICA</p><h3>Rotación mensual</h3><p>Serie completa disponible; el filtro de mes solo modifica el resumen y el detalle.</p></div><span className="badge">Todos los meses</span></div>
-          <LineChart data={monthlyData} series={[{ key: "turnover", color: "#d6001c", label: "Rotación total", format: "percent" }]} />
+          <div className="panel-heading"><div><p className="kicker">TENDENCIA INTERANUAL</p><h3>Rotación mensual comparable</h3><p>{hasBenchmark ? `${currentYear} vs. ${comparisonYear}: cada punto enfrenta el mismo mes calendario.` : `La serie ${currentYear} está lista; el comparativo se activará al cargar ${comparisonYear}.`}</p></div><span className="badge">{hasBenchmark ? `${currentYear} vs. ${comparisonYear}` : `Pendiente ${comparisonYear}`}</span></div>
+          <div className="comparison-summary">
+            <article><span>{currentYear} · último mes común</span><strong>{comparisonLatest ? `${comparisonLatest.turnover.toFixed(2)}%` : "Sin datos"}</strong><small>{comparisonLatest?.month ?? "Pendiente"}</small></article>
+            <article><span>{comparisonYear} · mismo mes</span><strong>{hasBenchmark && comparisonLatest ? `${comparisonLatest.benchmark.toFixed(2)}%` : "Pendiente"}</strong><small>{hasBenchmark ? "Base comparable" : "Se activará con la carga"}</small></article>
+            <article><span>Brecha interanual</span><strong>{comparisonGap === null ? "Pendiente" : `${comparisonGap >= 0 ? "+" : ""}${comparisonGap.toFixed(2)} pp`}</strong><small>Diferencia en puntos porcentuales</small></article>
+          </div>
+          <LineChart data={comparisonData} series={hasBenchmark ? [{ key: "turnover", color: "#d6001c", label: String(currentYear), format: "percent" }, { key: "benchmark", color: "#0957c3", label: String(comparisonYear), format: "percent" }] : [{ key: "turnover", color: "#d6001c", label: String(currentYear), format: "percent" }]} />
         </article>
         <article className="panel">
-          <div className="panel-heading"><div><p className="kicker">ORIGEN DEL CESE</p><h3>Rotación no deseada vs. deseada</h3><p>Compara ambas causas en toda la serie disponible y se actualiza con cada carga.</p></div><span className="badge">Serie completa</span></div>
+          <div className="panel-heading"><div><p className="kicker">ORIGEN DEL CESE · {currentYear}</p><h3>Rotación no deseada vs. deseada</h3><p>Esta vista conserva únicamente el año actual para evitar mezclar series de años diferentes.</p></div><span className="badge">{currentYear}</span></div>
           <div className="segment"><button aria-pressed={view === "porcentaje"} onClick={() => setView("porcentaje")}>Porcentaje</button><button aria-pressed={view === "eventos"} onClick={() => setView("eventos")}>Eventos</button></div>
           <LineChart data={exitChartData} series={[{ key: "employee", color: "#d6001c", label: "Rotación no deseada", format: view === "porcentaje" ? "percent" : "count" }, { key: "company", color: "#0957c3", label: "Rotación deseada", format: view === "porcentaje" ? "percent" : "count" }]} />
           <div className="split-summary"><span><i className="red" />No deseada <strong>{view === "eventos" ? evolutionTotals.employee : `${evolutionTotals.employeeRate.toFixed(2)}%`}</strong></span><span><i className="blue" />Deseada <strong>{view === "eventos" ? evolutionTotals.company : `${evolutionTotals.companyRate.toFixed(2)}%`}</strong></span></div>
@@ -323,12 +379,13 @@ export default function Home() {
       </section>
 
       <section className="panel heatmap-panel">
-        <div className="panel-heading"><div><p className="kicker">ÚLTIMO MES · {monthLabel(latestYear, latestMonth).toUpperCase()}</p><h3>Mapa de calor por regiones y ciudades</h3><p>Vista inicial: gerencia por región. Haz clic en una gerencia para ingresar al detalle de ciudad/sucursal y área. El color representa la rotación no deseada.</p></div><span className="badge">Meta no deseada 4%</span></div>
-        <div className="heatmap-scroll"><div className="heatmap-grid" style={{ gridTemplateColumns: `minmax(230px, 1.5fr) repeat(${heatmapRegions.length}, minmax(92px, 1fr))` }}>
-          <div className="heat-corner">Gerencia ↓ / Región →</div>{heatmapRegions.map((region) => <div className="heat-region" key={region}>{region}</div>)}
-          {heatmapAreas.map((gerencia) => <div className="heat-row" key={gerencia} style={{ display: "contents" }}><button className={heatmapArea === gerencia ? "heat-area active" : "heat-area"} onClick={() => setHeatmapArea(heatmapArea === gerencia ? null : gerencia)}>{gerencia}</button>{heatmapRegions.map((region) => { const value = heatmapValue(gerencia, region); return <div key={`${gerencia}-${region}`} className={value === null ? "heat-cell empty" : value <= MONTHLY_TARGET ? "heat-cell good" : "heat-cell alert"}>{value === null ? "—" : `${value.toFixed(2)}%`}</div>; })}</div>)}
+        <div className="panel-heading"><div><p className="kicker">COMPARATIVO TERRITORIAL</p><h3>Mapa de calor por macroregión</h3><p>{hasBenchmark ? `Brecha de rotación no deseada: ${currentYear} frente a ${comparisonYear}. Seleccione una región para ver sus ciudades.` : `La agrupación Norte, Sur, Centro y Oriente está lista. Al cargar ${comparisonYear} se activará la brecha interanual.`}</p></div><span className="badge">{hasBenchmark ? "Brecha interanual" : "Preparado para benchmark"}</span></div>
+        <div className="heatmap-legend"><span className="legend-good">Mejora</span><span className="legend-neutral">Sin comparación</span><span className="legend-alert">Mayor rotación</span></div>
+        <div className="heatmap-scroll"><div className="heatmap-grid" style={{ gridTemplateColumns: `minmax(190px, 1.25fr) repeat(${Math.max(regionMonths.length, 1)}, minmax(105px, 1fr))` }}>
+          <div className="heat-corner">Macroregión ↓ / Mes →</div>{regionMonths.length ? regionMonths.map((month) => <div className="heat-region" key={month}>{monthNames[month - 1]}</div>) : <div className="heat-region">Sin datos</div>}
+          {regionalComparison.map((item) => <div className="heat-row" key={item.region} style={{ display: "contents" }}><button className={heatmapArea === item.region ? "heat-area active" : "heat-area"} onClick={() => setHeatmapArea(heatmapArea === item.region ? null : item.region)}>{item.region}</button>{item.values.length ? item.values.map((value) => <div key={`${item.region}-${value.month}`} className={!value.current ? "heat-cell empty" : value.gap === null ? "heat-cell neutral" : value.gap <= 0 ? "heat-cell good" : "heat-cell alert"}>{!value.current ? "—" : value.gap === null ? `${value.current.rate.toFixed(2)}%` : `${value.gap >= 0 ? "+" : ""}${value.gap.toFixed(2)} pp`}</div>) : <div className="heat-cell empty">—</div>}</div>)}
         </div></div>
-        {heatmapArea && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">NIVEL INTERNO · CIUDAD / SUCURSAL / ÁREA</p><h3>{heatmapArea}</h3></div><button onClick={() => setHeatmapArea(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Región / ciudad</th><th>Sucursal / dotación</th><th>Área / categoría</th><th>Dotación</th><th>Ceses no deseados</th><th>Rotación no deseada</th><th>Meta no deseada</th></tr></thead><tbody>{heatmapDetail.map((row, index) => { const rate = row.h ? row.v / row.h * 100 : 0; return <tr key={`${row.r}-${row.q}-${row.d}-${index}`}><td>{row.r}</td><td>{row.d}</td><td>{row.q}</td><td>{row.h}</td><td>{row.v}</td><td><span className="worker-rate">{rate.toFixed(2)}%</span></td><td><span className={rate <= MONTHLY_TARGET ? "goal-ok" : "goal-alert"}>{rate <= MONTHLY_TARGET ? "Dentro de meta" : "Supera 4%"}</span></td></tr>; })}</tbody></table></div></div>}
+        {heatmapArea && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR CIUDAD · {monthNames[latestMonth - 1].toUpperCase()} {currentYear}</p><h3>Región {heatmapArea}</h3></div><button onClick={() => setHeatmapArea(null)}>Volver a regiones</button></div><div className="table-wrap"><table><thead><tr><th>Ciudad</th><th>Dotación prom. {currentYear}</th><th>Ceses no deseados</th><th>Rotación {currentYear}</th><th>Rotación {comparisonYear}</th><th>Brecha interanual</th></tr></thead><tbody>{cityComparison.length ? cityComparison.map((item) => <tr key={item.city}><td><strong>{item.city}</strong></td><td>{item.current?.headcount.toLocaleString("es-PE") ?? "—"}</td><td>{item.current?.employee ?? "—"}</td><td><span className="worker-rate">{item.current ? `${item.current.rate.toFixed(2)}%` : "—"}</span></td><td>{item.benchmark ? `${item.benchmark.rate.toFixed(2)}%` : "Pendiente"}</td><td><span className={item.gap === null ? "review-neutral" : item.gap <= 0 ? "review-ok" : "review-alert"}>{item.gap === null ? "Sin base" : `${item.gap >= 0 ? "+" : ""}${item.gap.toFixed(2)} pp`}</span></td></tr>) : <tr><td colSpan={6}>No hay ciudades disponibles para esta región.</td></tr>}</tbody></table></div></div>}
       </section>
 
       <details className="methodology"><summary>¿Qué se calcula en cada tasa?</summary><div><p><strong>Dotación promedio mensual:</strong> (dotación al inicio del mes + dotación al cierre del mes) ÷ 2. Si no existe el mes anterior, el inicio se reconstruye con cierre − ingresos + ceses.</p><p><strong>Rotación total:</strong> ceses del periodo ÷ dotación promedio × 100. La rotación no deseada y la rotación deseada usan, respectivamente, sus ceses sobre el mismo denominador.</p><p><strong>Deserción:</strong> salidas tempranas de la ventana ÷ ingresos de la misma ventana × 100. La ventana de 3 meses usa los últimos 90 días y la de 6 meses los últimos 180 días; ambas cambian con el mes analizado.</p></div></details>
