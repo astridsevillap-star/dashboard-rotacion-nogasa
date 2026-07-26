@@ -41,7 +41,8 @@ export async function GET() {
     await ensureSchema();
     const sql = database();
     const rows = await sql`SELECT year AS y, month AS m, area AS a, dotacion AS d, macro_region AS g, region AS r, category AS q, headcount AS h, hires AS i, exits AS c, employee AS v, company AS x, desert3 AS d3, desert6 AS d6 FROM uploaded_units ORDER BY year, month, macro_region, region, area, category`;
-    return Response.json({ rows }, { headers: { "Cache-Control": "no-store" } });
+    const uploads = await sql`SELECT year, month, source_name AS "sourceName", MAX(uploaded_at) AS "uploadedAt", COUNT(*)::INTEGER AS "storedRows" FROM uploaded_units GROUP BY year, month, source_name ORDER BY year DESC, month DESC, MAX(uploaded_at) DESC`;
+    return Response.json({ rows, uploads }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No se pudo consultar la base de datos." }, { status: 500 });
   }
