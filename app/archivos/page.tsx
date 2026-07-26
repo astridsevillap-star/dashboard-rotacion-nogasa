@@ -122,7 +122,7 @@ export default function FilesPage() {
               </tr>;
             })}</tbody>
           </table>
-        </div> : <div className="empty-state">{status}</div>}
+        </div> : <div className="empty-state" role="status" aria-live="polite">{status}</div>}
       </section>
 
       <section className="panel files-section">
