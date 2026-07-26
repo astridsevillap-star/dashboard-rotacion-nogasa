@@ -72,7 +72,7 @@ export default function MonthlyUploader({ onUploaded }: Props) {
             const isVoluntary = reason === "renuncia" || reason === "mutuo_disenso";
             if (isVoluntary) {
               group.voluntary.add(event);
-              if (ingreso) { const days = Math.floor((cese.getTime() - ingreso.getTime()) / 86400000); if (days < 92) group.d3.add(event); if (days <= 183) group.d6.add(event); }
+              if (ingreso) { const days = Math.floor((cese.getTime() - ingreso.getTime()) / 86400000); if (days <= 90) group.d3.add(event); if (days <= 180) group.d6.add(event); }
             } else group.company.add(event);
           }
         }
