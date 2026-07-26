@@ -25,3 +25,8 @@
 .upload-fields{grid-template-columns:1fr 1fr minmax(150px,.7fr) auto}
 @media(max-width:1150px){.upload-fields{grid-template-columns:1fr 1fr}}
 @media(max-width:700px){.upload-fields{grid-template-columns:1fr}}
+
+.evolution-stack{display:grid;grid-template-columns:1fr;gap:18px;margin-bottom:18px}
+.upload-fields label{min-width:0}
+.upload-fields input{width:100%;min-width:0}
+.worker-rate-card small{color:#fff!important;opacity:1!important}
