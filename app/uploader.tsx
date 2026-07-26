@@ -21,6 +21,19 @@ const dateValue = (value: unknown) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 const isoDay = (date: Date | null) => date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : "";
+const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+const macroRegionFor = (city: string, provided = "") => {
+  const named = plain(provided);
+  if (named.includes("NORTE")) return "Norte";
+  if (named.includes("SUR")) return "Sur";
+  if (named.includes("ORIENTE") || named.includes("SELVA")) return "Oriente";
+  if (named.includes("CENTRO")) return "Centro";
+  const place = plain(city);
+  if (["IQUITOS","PUCALLPA","TARAPOTO","MOYOBAMBA","JUANJUI","TINGO MARIA","PUERTO MALDONADO","LA MERCED"].some((name) => place.includes(name))) return "Oriente";
+  if (["AREQUIPA","CUSCO","PUNO","TACNA","MOQUEGUA","ICA","AYACUCHO"].some((name) => place.includes(name))) return "Sur";
+  if (["TUMBES","PIURA","SULLANA","TALARA","CHICLAYO","LAMBAYEQUE","TRUJILLO","CHIMBOTE","HUARAZ","CAJAMARCA","JAEN"].some((name) => place.includes(name))) return "Norte";
+  return "Centro";
+};
 
 async function workbookRows(file: File, terms = false): Promise<SheetRow[]> {
   const bytes = await file.arrayBuffer();
@@ -54,15 +67,19 @@ export default function MonthlyUploader({ onUploaded }: Props) {
       const termMap = new Map(termRows.map((row) => [`${text(row["Número de Documento"])}|${isoDay(dateValue(row["Fecha Término Trabajo"]))}`, normalized(row["Razón de Término"])]));
       const unique = new Map<string, SheetRow>();
       payrollRows.forEach((row) => {
-        const key = [row.DNI, row["FECHA INGRESO"], row["FECHA CESE"], row.AREA, row.DOTACION, row.DIVISION, row.CATEGORIA].map(text).join("|");
+        const key = [row.DNI, row["FECHA INGRESO"], row["FECHA CESE"], row.AREA, row.DOTACION, row.REGION, row["REGIÓN"], row.CIUDAD, row.DIVISION, row.CATEGORIA].map(text).join("|");
         unique.set(key, row);
       });
-      const groups = new Map<string, { y:number;m:number;a:string;d:string;r:string;q:string; people:Set<string>; hires:Set<string>; exits:Set<string>; voluntary:Set<string>; company:Set<string>; d3:Set<string>; d6:Set<string> }>();
+      const groups = new Map<string, { y:number;m:number;a:string;d:string;g:string;r:string;q:string; people:Set<string>; hires:Set<string>; exits:Set<string>; voluntary:Set<string>; company:Set<string>; d3:Set<string>; d6:Set<string> }>();
       for (const row of unique.values()) {
         const dni = text(row.DNI); const ingreso = dateValue(row["FECHA INGRESO"]); const cese = dateValue(row["FECHA CESE"]);
-        const area = text(row.AREA) || "SIN ÁREA"; const dotacion = text(row.DOTACION) || "SIN DOTACIÓN"; const region = text(row.DIVISION) || "SIN REGIÓN"; const category = text(row.CATEGORIA) || "SIN CATEGORÍA";
-        const key = [area, dotacion, region, category].join("|");
-        if (!groups.has(key)) groups.set(key, { y:year,m:month,a:area,d:dotacion,r:region,q:category,people:new Set(),hires:new Set(),exits:new Set(),voluntary:new Set(),company:new Set(),d3:new Set(),d6:new Set() });
+        const area = text(row.AREA) || "SIN ÁREA";
+        const dotacion = text(row.DOTACION) || "SIN DOTACIÓN";
+        const city = text(row.CIUDAD) || text(row.DIVISION) || "SIN CIUDAD";
+        const macroRegion = macroRegionFor(city, text(row.REGION) || text(row["REGIÓN"]));
+        const category = text(row.CATEGORIA) || "SIN CATEGORÍA";
+        const key = [area, dotacion, macroRegion, city, category].join("|");
+        if (!groups.has(key)) groups.set(key, { y:year,m:month,a:area,d:dotacion,g:macroRegion,r:city,q:category,people:new Set(),hires:new Set(),exits:new Set(),voluntary:new Set(),company:new Set(),d3:new Set(),d6:new Set() });
         const group = groups.get(key)!; group.people.add(dni);
         if (ingreso && ingreso.getFullYear() === year && ingreso.getMonth() + 1 === month) group.hires.add(`${dni}|${isoDay(ingreso)}`);
         if (cese && cese.getFullYear() === year && cese.getMonth() + 1 === month) {
@@ -72,12 +89,12 @@ export default function MonthlyUploader({ onUploaded }: Props) {
             const isVoluntary = reason === "renuncia" || reason === "mutuo_disenso";
             if (isVoluntary) {
               group.voluntary.add(event);
-              if (ingreso) { const days = Math.floor((cese.getTime() - ingreso.getTime()) / 86400000); if (days < 92) group.d3.add(event); if (days <= 183) group.d6.add(event); }
+              if (ingreso) { const days = Math.floor((cese.getTime() - ingreso.getTime()) / 86400000); if (days <= 90) group.d3.add(event); if (days <= 180) group.d6.add(event); }
             } else group.company.add(event);
           }
         }
       }
-      const rows = Array.from(groups.values()).map((group) => ({ y:group.y,m:group.m,a:group.a,d:group.d,r:group.r,q:group.q,h:group.people.size,i:group.hires.size,c:group.exits.size,v:group.voluntary.size,x:group.company.size,d3:group.d3.size,d6:group.d6.size }));
+      const rows = Array.from(groups.values()).map((group) => ({ y:group.y,m:group.m,a:group.a,d:group.d,g:group.g,r:group.r,q:group.q,h:group.people.size,i:group.hires.size,c:group.exits.size,v:group.voluntary.size,x:group.company.size,d3:group.d3.size,d6:group.d6.size }));
       const response = await fetch("/api/uploaded-data", { method: "POST", headers: { "content-type": "application/json", "x-upload-password": password }, body: JSON.stringify({ rows, sourceName: `${planilla.name} + ${terms.name}` }) });
       const result = await response.json() as { error?: string; period?: string };
       if (!response.ok) throw new Error(result.error ?? "No se pudo guardar la actualización.");
@@ -89,7 +106,7 @@ export default function MonthlyUploader({ onUploaded }: Props) {
   };
 
   return <section className="upload-panel">
-    <div><p className="kicker">ACTUALIZACIÓN MENSUAL</p><h3>Cargar nuevos archivos</h3><p>Los archivos se procesan para guardar únicamente indicadores agregados; no se publican nombres ni DNI.</p></div>
+    <div><p className="kicker">ACTUALIZACIÓN MENSUAL</p><h3>Cargar nuevos archivos</h3><p>Admite periodos 2025–2026 y columnas REGIÓN/CIUDAD. Solo se guardan indicadores agregados; no se publican nombres ni DNI.</p></div>
     <div className="upload-fields"><label>Planilla del nuevo mes<input type="file" accept=".xlsx,.xls" onChange={(e) => setPlanilla(e.target.files?.[0] ?? null)} /></label><label>Términos actualizado<input type="file" accept=".xlsx,.xls" onChange={(e) => setTerms(e.target.files?.[0] ?? null)} /></label><label>Clave de actualización<input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} /></label><button onClick={process} disabled={busy}>{busy ? "Procesando…" : "Actualizar dashboard"}</button></div>
     {status && <p className="upload-message" role="status">{status}</p>}
   </section>;
