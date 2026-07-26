@@ -316,7 +316,10 @@ export default function Home() {
       <header className="masthead">
         <div className="masthead-top">
           <div className="brand-line"><span className="brand-mark">N</span> PEOPLE ANALYTICS · NOGASA</div>
-          <p className="period-label">Periodo disponible · {availablePeriods.length ? `${monthLabel(Number(availablePeriods[0].slice(0,4)), Number(availablePeriods[0].slice(5)))}–${monthLabel(latestYear, latestMonth)}` : "Sin datos"}</p>
+          <div className="masthead-actions">
+            <a className="header-link" href="/archivos">Archivos y estructura</a>
+            <p className="period-label">Periodo disponible · {availablePeriods.length ? `${monthLabel(Number(availablePeriods[0].slice(0,4)), Number(availablePeriods[0].slice(5)))}–${monthLabel(latestYear, latestMonth)}` : "Sin datos"}</p>
+          </div>
         </div>
         <div className="masthead-copy">
           <div>
