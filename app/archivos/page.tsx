@@ -32,21 +32,19 @@ const termFields = [
   { name: "Razón de Término", required: "Sí", format: "Texto", purpose: "Clasifica la salida como deseada o no deseada." },
 ];
 
-function downloadWorkbook(kind: "payroll" | "terms") {
+function downloadWorkbook() {
   const workbook = XLSX.utils.book_new();
-  if (kind === "payroll") {
-    const headers = ["FECHA DATA", "DNI", "FECHA INGRESO", "FECHA CESE", "AREA", "DOTACION", "REGION", "CIUDAD", "CATEGORIA"];
-    const sheet = XLSX.utils.aoa_to_sheet([headers]);
-    sheet["!cols"] = headers.map((header) => ({ wch: Math.max(header.length + 4, 18) }));
-    XLSX.utils.book_append_sheet(workbook, sheet, "Planilla mensual");
-    XLSX.writeFile(workbook, "Plantilla_planilla_rotacion.xlsx");
-    return;
-  }
-  const headers = ["Número de Documento", "Fecha Término Trabajo", "Razón de Término"];
-  const sheet = XLSX.utils.aoa_to_sheet([headers]);
-  sheet["!cols"] = [{ wch: 24 }, { wch: 26 }, { wch: 30 }];
-  XLSX.utils.book_append_sheet(workbook, sheet, "Términos");
-  XLSX.writeFile(workbook, "Plantilla_terminos_rotacion.xlsx");
+  const payrollHeaders = ["FECHA DATA", "DNI", "FECHA INGRESO", "FECHA CESE", "AREA", "DOTACION", "REGION", "CIUDAD", "CATEGORIA"];
+  const payrollSheet = XLSX.utils.aoa_to_sheet([payrollHeaders]);
+  payrollSheet["!cols"] = payrollHeaders.map((header) => ({ wch: Math.max(header.length + 4, 18) }));
+  XLSX.utils.book_append_sheet(workbook, payrollSheet, "Planilla mensual");
+
+  const termHeaders = ["Número de Documento", "Fecha Término Trabajo", "Razón de Término"];
+  const termSheet = XLSX.utils.aoa_to_sheet([termHeaders]);
+  termSheet["!cols"] = [{ wch: 24 }, { wch: 26 }, { wch: 30 }];
+  XLSX.utils.book_append_sheet(workbook, termSheet, "Términos");
+
+  XLSX.writeFile(workbook, "Plantilla_unica_rotacion.xlsx");
 }
 
 function FieldTable({ rows }: { rows: typeof payrollFields }) {
@@ -91,25 +89,25 @@ export default function FilesPage() {
           <div>
             <p className="eyebrow">CONTROL DE INFORMACIÓN</p>
             <h1>Archivos y estructura de carga</h1>
-            <p className="masthead-subtitle">Consulta qué periodos fueron incorporados y descarga las plantillas con las columnas que requiere el tablero.</p>
+            <p className="masthead-subtitle">Consulta qué periodos fueron incorporados y descarga la plantilla única con las dos hojas que requiere el tablero.</p>
           </div>
         </div>
       </header>
 
       <section className="files-summary">
         <article><span>Periodos cargados</span><strong>{new Set(uploads.map((item) => `${item.year}-${item.month}`)).size}</strong><small>registrados en la base</small></article>
-        <article><span>Archivos identificados</span><strong>{uploads.length * 2}</strong><small>planilla y términos por carga</small></article>
+        <article><span>Archivos identificados</span><strong>{uploads.length}</strong><small>un libro de actualización por carga</small></article>
         <article><span>Datos personales guardados</span><strong>0</strong><small>solo se conservan indicadores agregados</small></article>
       </section>
 
       <section className="panel files-section">
         <div className="panel-heading">
-          <div><p className="kicker">HISTORIAL DE ACTUALIZACIONES</p><h2>Archivos cargados</h2><p>Se muestran los nombres originales registrados al procesar cada periodo. Los archivos Excel no se almacenan ni pueden descargarse desde el tablero.</p></div>
+          <div><p className="kicker">HISTORIAL DE ACTUALIZACIONES</p><h2>Archivos cargados</h2><p>Se muestra el nombre original registrado al procesar cada periodo. Los archivos Excel no se almacenan ni pueden descargarse desde el tablero.</p></div>
           <button className="secondary-action" onClick={() => void loadUploads()} disabled={loading}>{loading ? "Consultando…" : "Actualizar lista"}</button>
         </div>
         {uploads.length ? <div className="data-table-wrap">
           <table className="data-table">
-            <thead><tr><th>Periodo</th><th>Archivos procesados</th><th>Fecha de carga</th><th>Registros agregados</th><th>Estado</th></tr></thead>
+            <thead><tr><th>Periodo</th><th>Archivo procesado</th><th>Fecha de carga</th><th>Registros agregados</th><th>Estado</th></tr></thead>
             <tbody>{uploads.map((item, index) => {
               const month = Number(item.month);
               const date = new Date(item.uploadedAt);
@@ -127,16 +125,15 @@ export default function FilesPage() {
 
       <section className="panel files-section">
         <div className="panel-heading">
-          <div><p className="kicker">ARCHIVO 1</p><h2>Planilla mensual</h2><p>La primera hoja debe contener una fila por trabajador y respetar estas cabeceras.</p></div>
-          <button className="primary-action" onClick={() => downloadWorkbook("payroll")}>Descargar plantilla</button>
+          <div><p className="kicker">ARCHIVO ÚNICO</p><h2>Plantilla de actualización mensual</h2><p>El libro debe contener las hojas “Planilla mensual” y “Términos”. El sistema las reconoce por sus cabeceras.</p></div>
+          <button className="primary-action" onClick={downloadWorkbook}>Descargar plantilla única</button>
+        </div>
+        <div className="panel-heading">
+          <div><p className="kicker">HOJA 1</p><h3>Planilla mensual</h3><p>Debe contener una fila por trabajador y respetar estas cabeceras.</p></div>
         </div>
         <FieldTable rows={payrollFields} />
-      </section>
-
-      <section className="panel files-section">
-        <div className="panel-heading">
-          <div><p className="kicker">ARCHIVO 2</p><h2>Términos actualizado</h2><p>El sistema busca la fila que contiene “Número de Documento” y relaciona cada cese con la planilla.</p></div>
-          <button className="primary-action" onClick={() => downloadWorkbook("terms")}>Descargar plantilla</button>
+        <div className="panel-heading" style={{ marginTop: 24 }}>
+          <div><p className="kicker">HOJA 2</p><h3>Términos</h3><p>Relaciona cada cese con la planilla y permite clasificar correctamente la rotación.</p></div>
         </div>
         <FieldTable rows={termFields} />
       </section>
@@ -144,10 +141,10 @@ export default function FilesPage() {
       <section className="load-rules">
         <div><p className="kicker">ANTES DE CARGAR</p><h2>Validaciones recomendadas</h2></div>
         <ol>
-          <li>Utiliza un archivo independiente para la planilla y otro para términos.</li>
-          <li>Mantén las cabeceras exactamente como aparecen en las plantillas.</li>
+          <li>Utiliza un solo archivo Excel con las hojas “Planilla mensual” y “Términos”.</li>
+          <li>Mantén las cabeceras exactamente como aparecen en la plantilla.</li>
           <li>Verifica que FECHA DATA corresponda al mes que deseas actualizar.</li>
-          <li>Asegura que DNI, fecha de cese y fecha de término coincidan en ambos archivos.</li>
+          <li>Asegura que DNI, fecha de cese y fecha de término coincidan entre ambas hojas.</li>
           <li>No combines dos meses diferentes dentro de una misma carga.</li>
         </ol>
       </section>
