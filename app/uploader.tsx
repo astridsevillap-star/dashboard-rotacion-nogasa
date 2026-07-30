@@ -14,6 +14,14 @@ const normalized = (value: unknown) => text(value)
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, "_")
   .replace(/^_+|_+$/g, "");
+const valueFor = (row: SheetRow, aliases: string[]) => {
+  const values = new Map(Object.entries(row).map(([key, value]) => [normalized(key), value]));
+  for (const alias of aliases) {
+    const value = values.get(normalized(alias));
+    if (value !== undefined && text(value)) return value;
+  }
+  return "";
+};
 const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
 const dateValue = (value: unknown) => {
   if (value instanceof Date) return value;
@@ -79,48 +87,64 @@ async function hashValues(values: string[]) {
 async function payrollRecords(file: File) {
   const rows = await rowsFor(file, ["FECHA DATA", "DNI"]);
   if (!rows.length) throw new Error("El archivo de Planilla está vacío.");
-  const identifiers = rows.map((row) => text(row.DNI)).filter(Boolean);
+  const identifiers = rows.map((row) => text(valueFor(row, ["DNI", "Número de Documento", "N° Documento"]))).filter(Boolean);
   if (identifiers.length !== rows.length) throw new Error("Todas las filas de Planilla deben incluir DNI.");
+  const seenIdentifiers = new Set<string>();
+  const duplicateIdentifiers = new Set(identifiers.filter((identifier) => {
+    if (seenIdentifiers.has(identifier)) return true;
+    seenIdentifiers.add(identifier);
+    return false;
+  }));
+  if (duplicateIdentifiers.size) {
+    throw new Error(`La Planilla contiene ${duplicateIdentifiers.size} DNI duplicado(s). Cada persona debe figurar una sola vez por periodo.`);
+  }
   const hashes = await hashValues(identifiers);
   const periods = new Set(rows.map((row) => {
-    const date = dateValue(row["FECHA DATA"]);
+    const date = dateValue(valueFor(row, ["FECHA DATA", "FECHA DE DATA", "MES PLANILLA"]));
     return date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` : "";
   }));
   if (periods.has("")) throw new Error("Todas las filas deben incluir una FECHA DATA válida.");
   if (periods.size !== 1) throw new Error("La Planilla debe contener un solo periodo por carga.");
 
-  const unique = new Map<string, Record<string, unknown>>();
-  rows.forEach((row) => {
+  const records = rows.map((row) => {
     const period = Array.from(periods)[0];
-    const city = text(row.CIUDAD) || text(row.DIVISION) || "SIN CIUDAD";
-    const record = {
-      personHash: hashes.get(text(row.DNI)),
+    const identifier = text(valueFor(row, ["DNI", "Número de Documento", "N° Documento"]));
+    const gerencia = text(valueFor(row, ["GERENCIA", "GERENCIA / ÁREA", "GERENCIA AREA"]));
+    const sourceArea = text(valueFor(row, ["ÁREA", "AREA"]));
+    const organizationalArea = gerencia || sourceArea;
+    const dotacion = text(valueFor(row, ["DOTACIÓN", "DOTACION", "GRUPO DE DOTACIÓN", "GRUPO DOTACION"]));
+    const city = text(valueFor(row, ["CIUDAD", "DIVISIÓN", "DIVISION", "SEDE"])) || "SIN CIUDAD";
+    if (!organizationalArea || !dotacion) {
+      throw new Error("Todas las filas deben incluir GERENCIA (o AREA) y DOTACIÓN. Revise las cabeceras y los valores vacíos.");
+    }
+    return {
+      personHash: hashes.get(identifier),
       period,
-      hireDate: isoDay(dateValue(row["FECHA INGRESO"])),
-      exitDate: isoDay(dateValue(row["FECHA CESE"])),
-      area: text(row.AREA) || "SIN ÁREA",
-      dotacion: text(row.DOTACION) || "SIN DOTACIÓN",
-      macroRegion: macroRegionFor(city, text(row.REGION) || text(row["REGIÓN"])),
+      hireDate: isoDay(dateValue(valueFor(row, ["FECHA INGRESO", "FECHA DE INGRESO", "FECHA INICIO"]))),
+      exitDate: isoDay(dateValue(valueFor(row, ["FECHA CESE", "FECHA DE CESE", "FECHA TÉRMINO TRABAJO"]))),
+      area: organizationalArea,
+      dotacion,
+      macroRegion: macroRegionFor(city, text(valueFor(row, ["REGIÓN", "REGION", "MACROREGIÓN", "MACROREGION"]))),
       region: city,
-      category: text(row.CATEGORIA) || "SIN CATEGORÍA",
+      category: text(valueFor(row, ["CATEGORÍA", "CATEGORIA"])) || (gerencia ? sourceArea : "") || "SIN CATEGORÍA",
     };
-    unique.set(Object.values(record).join("|"), record);
   });
-  return Array.from(unique.values());
+  return records;
 }
 
 async function termRecords(file: File) {
   const rows = await rowsFor(file, ["Número de Documento", "Fecha Término Trabajo", "Razón de Término"]);
   if (!rows.length) throw new Error("El archivo de Términos está vacío.");
-  const identifiers = rows.map((row) => text(row["Número de Documento"])).filter(Boolean);
+  const identifiers = rows.map((row) => text(valueFor(row, ["Número de Documento", "N° Documento", "DNI"]))).filter(Boolean);
   if (identifiers.length !== rows.length) throw new Error("Todas las filas de Términos deben incluir Número de Documento.");
   const hashes = await hashValues(identifiers);
   const unique = new Map<string, Record<string, unknown>>();
   rows.forEach((row) => {
-    const termDate = isoDay(dateValue(row["Fecha Término Trabajo"]));
-    const reason = normalized(row["Razón de Término"]);
+    const identifier = text(valueFor(row, ["Número de Documento", "N° Documento", "DNI"]));
+    const termDate = isoDay(dateValue(valueFor(row, ["Fecha Término Trabajo", "Fecha de Término", "Fecha Cese"])));
+    const reason = normalized(valueFor(row, ["Razón de Término", "Razon Termino", "Motivo de Cese"]));
     if (!termDate || !reason) throw new Error("Todas las filas de Términos deben incluir fecha y razón de término válidas.");
-    const record = { personHash: hashes.get(text(row["Número de Documento"])), termDate, reason };
+    const record = { personHash: hashes.get(identifier), termDate, reason };
     unique.set(`${record.personHash}|${termDate}`, record);
   });
   return Array.from(unique.values());
@@ -148,7 +172,7 @@ export default function MonthlyUploader({ onUploaded }: Props) {
       const result = await response.json() as { error?: string; period?: string };
       if (!response.ok) throw new Error(result.error ?? "No se pudo guardar la actualización.");
       await onUploaded();
-      setStatus(`${kind === "payroll" ? "Planilla" : "Términos"} actualizado correctamente${result.period ? ` · ${result.period}` : ""}. Si ya existía una carga del mismo periodo, fue reemplazada. El dashboard ya fue recalculado.`);
+      setStatus(`${kind === "payroll" ? "Planilla" : "Términos"} incorporado correctamente${result.period ? ` · ${result.period}` : ""}. El dashboard ya fue recalculado.`);
       if (kind === "payroll") setPayrollFile(null); else setTermsFile(null);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Ocurrió un error al procesar el archivo.");
@@ -161,7 +185,7 @@ export default function MonthlyUploader({ onUploaded }: Props) {
     <div>
       <p className="kicker">ACTUALIZACIÓN INDEPENDIENTE</p>
       <h3>Cargar Planilla o Términos</h3>
-      <p>Cada archivo se procesa por separado. Si vuelve a cargar el mismo tipo de archivo y periodo, la nueva carga reemplaza íntegramente a la anterior; no se acumulan registros.</p>
+      <p>Cada archivo se procesa por separado. No necesita cargar Términos para incorporar una Planilla, ni volver a cargar la Planilla cuando actualice Términos.</p>
     </div>
     <div className="independent-upload-fields">
       <label className="upload-password">Clave de actualización<input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} /></label>
