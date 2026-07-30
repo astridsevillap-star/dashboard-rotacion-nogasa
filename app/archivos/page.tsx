@@ -91,7 +91,7 @@ export default function FilesPage() {
     </section>
 
     <section className="panel files-section">
-      <div className="panel-heading"><div><p className="kicker">HISTORIAL DE ACTUALIZACIONES</p><h2>Archivos cargados</h2><p>Cada carga registra su tipo, periodo, nombre original y fecha de procesamiento.</p></div><button className="secondary-action" onClick={() => void loadUploads()} disabled={loading}>{loading ? "Consultando…" : "Actualizar lista"}</button></div>
+      <div className="panel-heading"><div><p className="kicker">HISTORIAL DE ACTUALIZACIONES</p><h2>Archivos cargados</h2><p>Se conserva una sola carga vigente por tipo de archivo y periodo. Al volver a cargarla, el registro anterior se reemplaza.</p></div><button className="secondary-action" onClick={() => void loadUploads()} disabled={loading}>{loading ? "Consultando…" : "Actualizar lista"}</button></div>
       {uploads.length ? <div className="data-table-wrap"><table className="data-table">
         <thead><tr><th>Tipo</th><th>Periodo</th><th>Archivo procesado</th><th>Fecha de carga</th><th>Registros</th><th>Estado</th></tr></thead>
         <tbody>{uploads.map((item, index) => {
@@ -118,8 +118,9 @@ export default function FilesPage() {
       <ol>
         <li>Cargue únicamente el archivo que desea actualizar: Planilla o Términos.</li>
         <li>Mantenga las cabeceras exactamente como aparecen en cada plantilla.</li>
-        <li>La Planilla debe contener un solo mes por carga.</li>
-        <li>El archivo de Términos puede contener uno o varios meses; cada mes incluido reemplaza su clasificación anterior.</li>
+        <li>La Planilla debe contener un solo mes por carga y el archivo debe incluir toda la información vigente de ese mes.</li>
+        <li>El archivo de Términos puede contener uno o varios meses; debe incluir toda la información vigente de cada mes incorporado.</li>
+        <li>Al cargar nuevamente el mismo tipo de archivo y periodo, la carga anterior se reemplaza íntegramente y no se acumulan registros.</li>
         <li>Si Términos se carga primero, quedará disponible y se aplicará cuando posteriormente se incorpore la Planilla correspondiente.</li>
       </ol>
     </section>
