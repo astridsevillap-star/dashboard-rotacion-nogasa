@@ -105,10 +105,9 @@ export default function Home() {
     fetch("/api/uploaded-data").then((response) => response.json()).then((result: { rows?: DataRow[] }) => setUploadedRows(result.rows ?? []));
   }, []);
   const allUnits = useMemo(() => {
-    const rows = new Map<string, DataRow>();
-    seedData.forEach((row) => rows.set([row.y,row.m,row.a,row.d,row.r,row.q].join("|"), row));
-    uploadedRows.forEach((row) => rows.set([row.y,row.m,row.a,row.d,row.r,row.q].join("|"), row));
-    return Array.from(rows.values());
+    const uploadedPeriods = new Set(uploadedRows.map((row) => `${row.y}-${String(row.m).padStart(2, "0")}`));
+    const fallbackRows = seedData.filter((row) => !uploadedPeriods.has(`${row.y}-${String(row.m).padStart(2, "0")}`));
+    return [...fallbackRows, ...uploadedRows];
   }, [uploadedRows]);
   const areas = useMemo(() => ["Todas las gerencias / áreas", ...Array.from(new Set(allUnits.map((row) => row.a))).sort()], [allUnits]);
   const groups = useMemo(() => ["Toda la dotación", ...Array.from(new Set(allUnits.map((row) => row.d))).sort()], [allUnits]);
