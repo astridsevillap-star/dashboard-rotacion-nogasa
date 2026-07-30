@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 
 export const runtime = "nodejs";
@@ -61,6 +61,14 @@ function periodLabel(keys: string[]) {
     return `${monthNames[month - 1]} ${year}`;
   };
   return sorted.length === 1 ? label(sorted[0]) : `${label(sorted[0])} – ${label(sorted[sorted.length - 1])}`;
+}
+
+async function replaceSource(sql: Database, sourceType: "Planilla" | "Términos", period: string, sourceName: string, uploadedAt: string, storedRows: number) {
+  const label = periodLabel([period]);
+  const id = recordId(["source", sourceType, period]);
+  await sql`DELETE FROM uploaded_sources WHERE source_type=${sourceType} AND period_label=${label}`;
+  await sql`INSERT INTO uploaded_sources (id,source_type,period_label,source_name,uploaded_at,stored_rows)
+    VALUES (${id},${sourceType},${label},${sourceName},${uploadedAt},${storedRows})`;
 }
 
 async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
@@ -151,7 +159,7 @@ async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: 
   await sql`DELETE FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
   for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
   await rebuildPeriod(sql, periods[0], sourceName);
-  await sql`INSERT INTO uploaded_sources (id,source_type,period_label,source_name,uploaded_at,stored_rows) VALUES (${randomUUID()},'Planilla',${periodLabel(periods)},${sourceName},${uploadedAt},${records.length})`;
+  await replaceSource(sql, "Planilla", periods[0], sourceName, uploadedAt, records.length);
   return periods[0];
 }
 
@@ -169,8 +177,11 @@ async function saveTerms(sql: Database, records: TermRecord[], sourceName: strin
   });
   for (const query of deletes) await query;
   for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
-  for (const key of periods) await rebuildPeriod(sql, key, sourceName);
-  await sql`INSERT INTO uploaded_sources (id,source_type,period_label,source_name,uploaded_at,stored_rows) VALUES (${randomUUID()},'Términos',${periodLabel(periods)},${sourceName},${uploadedAt},${records.length})`;
+  for (const key of periods) {
+    await rebuildPeriod(sql, key, sourceName);
+    const storedRows = records.filter((record) => record.termDate.startsWith(key)).length;
+    await replaceSource(sql, "Términos", key, sourceName, uploadedAt, storedRows);
+  }
   return periods.length === 1 ? periods[0] : periodLabel(periods);
 }
 
@@ -194,7 +205,13 @@ export async function GET() {
     const sql = database();
     await ensureSchema(sql);
     const rows = await sql`SELECT year AS y,month AS m,area AS a,dotacion AS d,macro_region AS g,region AS r,category AS q,headcount AS h,hires AS i,exits AS c,employee AS v,company AS x,desert3 AS d3,desert6 AS d6 FROM uploaded_units ORDER BY year,month,macro_region,region,area,category`;
-    const uploads = await sql`SELECT source_type AS "sourceType",period_label AS "periodLabel",source_name AS "sourceName",uploaded_at AS "uploadedAt",stored_rows AS "storedRows" FROM uploaded_sources ORDER BY uploaded_at DESC`;
+    const uploads = await sql`SELECT "sourceType","periodLabel","sourceName","uploadedAt","storedRows" FROM (
+      SELECT DISTINCT ON (source_type,period_label)
+        source_type AS "sourceType",period_label AS "periodLabel",source_name AS "sourceName",
+        uploaded_at AS "uploadedAt",stored_rows AS "storedRows"
+      FROM uploaded_sources
+      ORDER BY source_type,period_label,uploaded_at DESC
+    ) AS latest_sources ORDER BY "uploadedAt" DESC`;
     const legacyUploads = await sql`SELECT 'Carga consolidada' AS "sourceType", CONCAT(month,'/',year) AS "periodLabel", source_name AS "sourceName",MAX(uploaded_at) AS "uploadedAt",COUNT(*)::INTEGER AS "storedRows" FROM uploaded_units GROUP BY year,month,source_name ORDER BY MAX(uploaded_at) DESC`;
     return Response.json({ rows, uploads: uploads.length ? uploads : legacyUploads }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
