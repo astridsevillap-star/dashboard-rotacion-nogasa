@@ -148,7 +148,7 @@ export default function MonthlyUploader({ onUploaded }: Props) {
       const result = await response.json() as { error?: string; period?: string };
       if (!response.ok) throw new Error(result.error ?? "No se pudo guardar la actualización.");
       await onUploaded();
-      setStatus(`${kind === "payroll" ? "Planilla" : "Términos"} incorporado correctamente${result.period ? ` · ${result.period}` : ""}. El dashboard ya fue recalculado.`);
+      setStatus(`${kind === "payroll" ? "Planilla" : "Términos"} actualizado correctamente${result.period ? ` · ${result.period}` : ""}. Si ya existía una carga del mismo periodo, fue reemplazada. El dashboard ya fue recalculado.`);
       if (kind === "payroll") setPayrollFile(null); else setTermsFile(null);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Ocurrió un error al procesar el archivo.");
@@ -161,7 +161,7 @@ export default function MonthlyUploader({ onUploaded }: Props) {
     <div>
       <p className="kicker">ACTUALIZACIÓN INDEPENDIENTE</p>
       <h3>Cargar Planilla o Términos</h3>
-      <p>Cada archivo se procesa por separado. No necesita cargar Términos para incorporar una Planilla, ni volver a cargar la Planilla cuando actualice Términos.</p>
+      <p>Cada archivo se procesa por separado. Si vuelve a cargar el mismo tipo de archivo y periodo, la nueva carga reemplaza íntegramente a la anterior; no se acumulan registros.</p>
     </div>
     <div className="independent-upload-fields">
       <label className="upload-password">Clave de actualización<input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} /></label>
