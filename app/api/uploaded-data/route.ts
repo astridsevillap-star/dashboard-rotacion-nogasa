@@ -143,6 +143,7 @@ async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: 
   const periods = Array.from(new Set(records.map((record) => record.period)));
   if (periods.length !== 1 || !periodPattern.test(periods[0])) throw new Error("La Planilla debe corresponder a un único periodo válido.");
   if (records.some((record) => !hashPattern.test(record.personHash) || (record.hireDate && !datePattern.test(record.hireDate)) || (record.exitDate && !datePattern.test(record.exitDate)))) throw new Error("La Planilla contiene identificadores o fechas inválidas.");
+  if (new Set(records.map((record) => record.personHash)).size !== records.length) throw new Error("La Planilla contiene DNI duplicados. Cada persona debe figurar una sola vez por periodo.");
   const [year, month] = periods[0].split("-").map(Number);
   const uploadedAt = new Date().toISOString();
   const inserts = records.map((record) => {
@@ -152,7 +153,7 @@ async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: 
     const region = safeText(record.region, "SIN CIUDAD");
     const category = safeText(record.category, "SIN CATEGORÍA");
     const personHash = protectedPersonHash(record.personHash);
-    const id = recordId([record.period, personHash, record.hireDate, record.exitDate, area, dotacion, macroRegion, region, category]);
+    const id = recordId([record.period, personHash]);
     return sql`INSERT INTO uploaded_payroll (id,year,month,person_hash,hire_date,exit_date,area,dotacion,macro_region,region,category,uploaded_at,source_name)
       VALUES (${id},${year},${month},${personHash},${record.hireDate},${record.exitDate},${area},${dotacion},${macroRegion},${region},${category},${uploadedAt},${sourceName})`;
   });
@@ -212,8 +213,22 @@ export async function GET() {
       FROM uploaded_sources
       ORDER BY source_type,period_label,uploaded_at DESC
     ) AS latest_sources ORDER BY "uploadedAt" DESC`;
+    const quality = await sql`SELECT
+      payroll.year,
+      payroll.month,
+      COUNT(*)::INTEGER AS "payrollRows",
+      COUNT(DISTINCT payroll.person_hash)::INTEGER AS "distinctPeople",
+      COUNT(*) FILTER (WHERE payroll.area='SIN ÁREA')::INTEGER AS "missingArea",
+      COUNT(*) FILTER (WHERE payroll.dotacion='SIN DOTACIÓN')::INTEGER AS "missingDotacion",
+      COUNT(*) FILTER (WHERE payroll.region='SIN CIUDAD')::INTEGER AS "missingRegion",
+      COUNT(*) FILTER (WHERE payroll.category='SIN CATEGORÍA')::INTEGER AS "missingCategory",
+      COALESCE((SELECT SUM(units.headcount) FROM uploaded_units units
+        WHERE units.year=payroll.year AND units.month=payroll.month),0)::INTEGER AS headcount
+      FROM uploaded_payroll payroll
+      GROUP BY payroll.year,payroll.month
+      ORDER BY payroll.year,payroll.month`;
     const legacyUploads = await sql`SELECT 'Carga consolidada' AS "sourceType", CONCAT(month,'/',year) AS "periodLabel", source_name AS "sourceName",MAX(uploaded_at) AS "uploadedAt",COUNT(*)::INTEGER AS "storedRows" FROM uploaded_units GROUP BY year,month,source_name ORDER BY MAX(uploaded_at) DESC`;
-    return Response.json({ rows, uploads: uploads.length ? uploads : legacyUploads }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ rows, uploads: uploads.length ? uploads : legacyUploads, quality }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No se pudo consultar la base de datos." }, { status: 500 });
   }
