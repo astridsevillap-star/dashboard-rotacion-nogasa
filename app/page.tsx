@@ -106,8 +106,17 @@ export default function Home() {
   }, []);
   const allUnits = useMemo(() => {
     const uploadedPeriods = new Set(uploadedRows.map((row) => `${row.y}-${String(row.m).padStart(2, "0")}`));
-    const fallbackRows = seedData.filter((row) => !uploadedPeriods.has(`${row.y}-${String(row.m).padStart(2, "0")}`));
-    return [...fallbackRows, ...uploadedRows];
+    const seedPeriods = new Set(seedData.map((row) => `${row.y}-${String(row.m).padStart(2, "0")}`));
+    const incompleteUploadedPeriods = new Set(Array.from(uploadedPeriods).filter((key) => {
+      const rows = uploadedRows.filter((row) => `${row.y}-${String(row.m).padStart(2, "0")}` === key);
+      return seedPeriods.has(key) && rows.some((row) => row.a === "SIN ÁREA" || row.d === "SIN DOTACIÓN");
+    }));
+    const fallbackRows = seedData.filter((row) => {
+      const key = `${row.y}-${String(row.m).padStart(2, "0")}`;
+      return !uploadedPeriods.has(key) || incompleteUploadedPeriods.has(key);
+    });
+    const validUploadedRows = uploadedRows.filter((row) => !incompleteUploadedPeriods.has(`${row.y}-${String(row.m).padStart(2, "0")}`));
+    return [...fallbackRows, ...validUploadedRows];
   }, [uploadedRows]);
   const areas = useMemo(() => ["Todas las gerencias / áreas", ...Array.from(new Set(allUnits.map((row) => row.a))).sort()], [allUnits]);
   const groups = useMemo(() => ["Toda la dotación", ...Array.from(new Set(allUnits.map((row) => row.d))).sort()], [allUnits]);
