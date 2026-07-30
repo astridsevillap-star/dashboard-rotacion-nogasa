@@ -35,31 +35,56 @@ const macroRegionFor = (city: string, provided = "") => {
   return "Centro";
 };
 
-async function workbookRows(file: File, terms = false): Promise<SheetRow[]> {
+function matrixFor(sheet: XLSX.WorkSheet) {
+  return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
+}
+
+function hasColumns(matrix: unknown[][], required: string[]) {
+  return matrix.some((row) => {
+    const values = row.map((cell) => plain(text(cell)));
+    return required.every((header) => values.includes(plain(header)));
+  });
+}
+
+async function workbookRows(file: File): Promise<{ payrollRows: SheetRow[]; termRows: SheetRow[] }> {
   const bytes = await file.arrayBuffer();
   const book = XLSX.read(bytes, { type: "array", cellDates: true });
-  const sheet = book.Sheets[book.SheetNames[0]];
-  if (!terms) return XLSX.utils.sheet_to_json<SheetRow>(sheet, { defval: null, raw: true });
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
-  const headerIndex = matrix.findIndex((row) => row.some((cell) => text(cell) === "Número de Documento"));
-  if (headerIndex < 0) throw new Error("No se encontró la cabecera de la tabla de términos.");
-  const headers = matrix[headerIndex].map(text);
-  return matrix.slice(headerIndex + 1).filter((row) => row.some(Boolean)).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index]])));
+  const sheets = book.SheetNames.map((name) => ({ name, sheet: book.Sheets[name], matrix: matrixFor(book.Sheets[name]) }));
+  const payroll = sheets.find(({ matrix }) => hasColumns(matrix, ["FECHA DATA", "DNI"]));
+  const terms = sheets.find(({ matrix }) => hasColumns(matrix, ["Número de Documento", "Fecha Término Trabajo", "Razón de Término"]));
+
+  if (!payroll) throw new Error("El archivo debe incluir una hoja con las columnas FECHA DATA y DNI.");
+  if (!terms) throw new Error("El archivo debe incluir una hoja de Términos con Número de Documento, Fecha Término Trabajo y Razón de Término.");
+
+  const payrollHeaderIndex = payroll.matrix.findIndex((row) => hasColumns([row], ["FECHA DATA", "DNI"]));
+  const payrollHeaders = payroll.matrix[payrollHeaderIndex].map(text);
+  const payrollRows = payroll.matrix
+    .slice(payrollHeaderIndex + 1)
+    .filter((row) => row.some((cell) => text(cell)))
+    .map((row) => Object.fromEntries(payrollHeaders.map((header, index) => [header, row[index]])));
+
+  const termHeaderIndex = terms.matrix.findIndex((row) => hasColumns([row], ["Número de Documento", "Fecha Término Trabajo", "Razón de Término"]));
+  const termHeaders = terms.matrix[termHeaderIndex].map(text);
+  const termRows = terms.matrix
+    .slice(termHeaderIndex + 1)
+    .filter((row) => row.some((cell) => text(cell)))
+    .map((row) => Object.fromEntries(termHeaders.map((header, index) => [header, row[index]])));
+
+  return { payrollRows, termRows };
 }
 
 export default function MonthlyUploader({ onUploaded }: Props) {
-  const [planilla, setPlanilla] = useState<File | null>(null);
-  const [terms, setTerms] = useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
   const process = async () => {
-    if (!planilla || !terms || !password) return setStatus("Selecciona ambos archivos e ingresa la clave de actualización.");
-    setBusy(true); setStatus("Validando y consolidando los archivos…");
+    if (!file || !password) return setStatus("Selecciona el archivo de actualización e ingresa la clave.");
+    setBusy(true); setStatus("Validando y consolidando el archivo…");
     try {
-      const [payrollRows, termRows] = await Promise.all([workbookRows(planilla), workbookRows(terms, true)]);
-      if (!payrollRows.length) throw new Error("La planilla mensual está vacía.");
+      const { payrollRows, termRows } = await workbookRows(file);
+      if (!payrollRows.length) throw new Error("La hoja de planilla mensual está vacía.");
       const periodDate = dateValue(payrollRows[0]["FECHA DATA"]);
       if (!periodDate) throw new Error("No se pudo identificar FECHA DATA.");
       const year = periodDate.getFullYear();
@@ -95,19 +120,19 @@ export default function MonthlyUploader({ onUploaded }: Props) {
         }
       }
       const rows = Array.from(groups.values()).map((group) => ({ y:group.y,m:group.m,a:group.a,d:group.d,g:group.g,r:group.r,q:group.q,h:group.people.size,i:group.hires.size,c:group.exits.size,v:group.voluntary.size,x:group.company.size,d3:group.d3.size,d6:group.d6.size }));
-      const response = await fetch("/api/uploaded-data", { method: "POST", headers: { "content-type": "application/json", "x-upload-password": password }, body: JSON.stringify({ rows, sourceName: `${planilla.name} + ${terms.name}` }) });
+      const response = await fetch("/api/uploaded-data", { method: "POST", headers: { "content-type": "application/json", "x-upload-password": password }, body: JSON.stringify({ rows, sourceName: file.name }) });
       const result = await response.json() as { error?: string; period?: string };
       if (!response.ok) throw new Error(result.error ?? "No se pudo guardar la actualización.");
       await onUploaded();
       setStatus(`Periodo ${result.period} incorporado correctamente. El dashboard ya fue actualizado.`);
-      setPlanilla(null); setTerms(null);
-    } catch (error) { setStatus(error instanceof Error ? error.message : "Ocurrió un error al procesar los archivos."); }
+      setFile(null);
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Ocurrió un error al procesar el archivo."); }
     finally { setBusy(false); }
   };
 
   return <section className="upload-panel">
-    <div><p className="kicker">ACTUALIZACIÓN MENSUAL</p><h3>Cargar nuevos archivos</h3><p>Admite periodos 2025–2026 y columnas REGIÓN/CIUDAD. Solo se guardan indicadores agregados; no se publican nombres ni DNI.</p></div>
-    <div className="upload-fields"><label>Planilla del nuevo mes<input type="file" accept=".xlsx,.xls" onChange={(e) => setPlanilla(e.target.files?.[0] ?? null)} /></label><label>Términos actualizado<input type="file" accept=".xlsx,.xls" onChange={(e) => setTerms(e.target.files?.[0] ?? null)} /></label><label>Clave de actualización<input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} /></label><button onClick={process} disabled={busy}>{busy ? "Procesando…" : "Actualizar dashboard"}</button></div>
+    <div><p className="kicker">ACTUALIZACIÓN MENSUAL</p><h3>Cargar archivo de actualización</h3><p>Utiliza un solo Excel con las hojas “Planilla mensual” y “Términos”. Solo se guardan indicadores agregados; no se publican nombres ni DNI.</p></div>
+    <div className="upload-fields"><label>Archivo del nuevo mes<input type="file" accept=".xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label><label>Clave de actualización<input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} /></label><button onClick={process} disabled={busy}>{busy ? "Procesando…" : "Actualizar dashboard"}</button></div>
     {status && <p className="upload-message" role="status">{status}</p>}
   </section>;
 }
