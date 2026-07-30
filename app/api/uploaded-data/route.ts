@@ -1,10 +1,18 @@
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-type IncomingRow = { y:number;m:number;a:string;d:string;g?:string;r:string;q:string;h:number;i:number;c:number;v:number;x:number;d3:number;d6:number };
+type AggregateRow = { y:number;m:number;a:string;d:string;g?:string;r:string;q:string;h:number;i:number;c:number;v:number;x:number;d3:number;d6:number };
+type PayrollRecord = { personHash:string;period:string;hireDate:string;exitDate:string;area:string;dotacion:string;macroRegion:string;region:string;category:string };
+type TermRecord = { personHash:string;termDate:string;reason:string };
+
+const monthNames = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const periodPattern = /^(20\d{2})-(0[1-9]|1[0-2])$/;
+const datePattern = /^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const hashPattern = /^[a-f0-9]{64}$/;
 
 function database() {
   const url = process.env.DATABASE_URL;
@@ -12,68 +20,188 @@ function database() {
   return neon(url);
 }
 
-async function ensureSchema() {
-  const sql = database();
+type Database = ReturnType<typeof database>;
+
+async function ensureSchema(sql: Database) {
   await sql`CREATE TABLE IF NOT EXISTS uploaded_units (
-    id TEXT PRIMARY KEY,
-    year INTEGER NOT NULL,
-    month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
-    area TEXT NOT NULL,
-    dotacion TEXT NOT NULL,
-    macro_region TEXT NOT NULL DEFAULT 'SIN REGIÓN',
-    region TEXT NOT NULL,
-    category TEXT NOT NULL,
-    headcount INTEGER NOT NULL,
-    hires INTEGER NOT NULL,
-    exits INTEGER NOT NULL,
-    employee INTEGER NOT NULL,
-    company INTEGER NOT NULL,
-    desert3 INTEGER NOT NULL,
-    desert6 INTEGER NOT NULL,
-    uploaded_at TIMESTAMPTZ NOT NULL,
-    source_name TEXT NOT NULL
+    id TEXT PRIMARY KEY, year INTEGER NOT NULL, month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+    area TEXT NOT NULL, dotacion TEXT NOT NULL, macro_region TEXT NOT NULL DEFAULT 'SIN REGIÓN',
+    region TEXT NOT NULL, category TEXT NOT NULL, headcount INTEGER NOT NULL, hires INTEGER NOT NULL,
+    exits INTEGER NOT NULL, employee INTEGER NOT NULL, company INTEGER NOT NULL, desert3 INTEGER NOT NULL,
+    desert6 INTEGER NOT NULL, uploaded_at TIMESTAMPTZ NOT NULL, source_name TEXT NOT NULL
   )`;
   await sql`ALTER TABLE uploaded_units ADD COLUMN IF NOT EXISTS macro_region TEXT NOT NULL DEFAULT 'SIN REGIÓN'`;
+  await sql`CREATE TABLE IF NOT EXISTS uploaded_payroll (
+    id TEXT PRIMARY KEY, year INTEGER NOT NULL, month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+    person_hash TEXT NOT NULL, hire_date TEXT NOT NULL DEFAULT '', exit_date TEXT NOT NULL DEFAULT '',
+    area TEXT NOT NULL, dotacion TEXT NOT NULL, macro_region TEXT NOT NULL, region TEXT NOT NULL,
+    category TEXT NOT NULL, uploaded_at TIMESTAMPTZ NOT NULL, source_name TEXT NOT NULL
+  )`;
+  await sql`CREATE INDEX IF NOT EXISTS uploaded_payroll_period_idx ON uploaded_payroll(year, month)`;
+  await sql`CREATE TABLE IF NOT EXISTS uploaded_terms (
+    id TEXT PRIMARY KEY, person_hash TEXT NOT NULL, term_date TEXT NOT NULL, reason TEXT NOT NULL,
+    uploaded_at TIMESTAMPTZ NOT NULL, source_name TEXT NOT NULL
+  )`;
+  await sql`CREATE INDEX IF NOT EXISTS uploaded_terms_period_idx ON uploaded_terms(term_date)`;
+  await sql`CREATE TABLE IF NOT EXISTS uploaded_sources (
+    id TEXT PRIMARY KEY, source_type TEXT NOT NULL, period_label TEXT NOT NULL, source_name TEXT NOT NULL,
+    uploaded_at TIMESTAMPTZ NOT NULL, stored_rows INTEGER NOT NULL
+  )`;
+}
+
+const safeText = (value: unknown, fallback: string, max = 180) => String(value ?? "").trim().slice(0, max) || fallback;
+const recordId = (parts: string[]) => createHash("sha256").update(parts.join("|")).digest("hex");
+const protectedPersonHash = (hash: string) => createHmac("sha256", process.env.UPLOAD_PASSWORD!).update(hash).digest("hex");
+const daysBetween = (start: string, end: string) => Math.floor((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000);
+
+function periodLabel(keys: string[]) {
+  const sorted = [...keys].sort();
+  const label = (key: string) => {
+    const [year, month] = key.split("-").map(Number);
+    return `${monthNames[month - 1]} ${year}`;
+  };
+  return sorted.length === 1 ? label(sorted[0]) : `${label(sorted[0])} – ${label(sorted[sorted.length - 1])}`;
+}
+
+async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
+  const match = key.match(periodPattern);
+  if (!match) return;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const payroll = await sql`SELECT person_hash, hire_date, exit_date, area, dotacion, macro_region, region, category
+    FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
+  const terms = await sql`SELECT person_hash, term_date, reason FROM uploaded_terms WHERE LEFT(term_date, 7)=${key}`;
+  const termMap = new Map(terms.map((row) => [`${row.person_hash}|${row.term_date}`, String(row.reason)]));
+  const groups = new Map<string, { a:string;d:string;g:string;r:string;q:string;people:Set<string>;hires:Set<string>;exits:Set<string>;employee:Set<string>;company:Set<string>;d3:Set<string>;d6:Set<string> }>();
+
+  for (const row of payroll) {
+    const area = String(row.area);
+    const dotacion = String(row.dotacion);
+    const macroRegion = String(row.macro_region);
+    const region = String(row.region);
+    const category = String(row.category);
+    const personHash = String(row.person_hash);
+    const hireDate = String(row.hire_date);
+    const exitDate = String(row.exit_date);
+    const groupKey = [area, dotacion, macroRegion, region, category].join("|");
+    if (!groups.has(groupKey)) groups.set(groupKey, { a:area,d:dotacion,g:macroRegion,r:region,q:category,people:new Set(),hires:new Set(),exits:new Set(),employee:new Set(),company:new Set(),d3:new Set(),d6:new Set() });
+    const group = groups.get(groupKey)!;
+    group.people.add(personHash);
+    if (hireDate.startsWith(key)) group.hires.add(`${personHash}|${hireDate}`);
+    if (exitDate.startsWith(key)) {
+      const event = `${personHash}|${exitDate}`;
+      const reason = termMap.get(event);
+      if (reason !== "no_se_inicio_relacion_laboral") {
+        group.exits.add(event);
+        if (reason) {
+          const voluntary = reason === "renuncia" || reason === "mutuo_disenso";
+          if (voluntary) {
+            group.employee.add(event);
+            if (hireDate && daysBetween(hireDate, exitDate) <= 90) group.d3.add(event);
+            if (hireDate && daysBetween(hireDate, exitDate) <= 180) group.d6.add(event);
+          } else {
+            group.company.add(event);
+          }
+        }
+      }
+    }
+  }
+
+  const uploadedAt = new Date().toISOString();
+  const inserts = Array.from(groups.values()).map((group) => {
+    const id = [year, month, group.a, group.d, group.r, group.q].join("|");
+    return sql`INSERT INTO uploaded_units (id, year, month, area, dotacion, macro_region, region, category, headcount, hires, exits, employee, company, desert3, desert6, uploaded_at, source_name)
+      VALUES (${id},${year},${month},${group.a},${group.d},${group.g},${group.r},${group.q},${group.people.size},${group.hires.size},${group.exits.size},${group.employee.size},${group.company.size},${group.d3.size},${group.d6.size},${uploadedAt},${sourceName})
+      ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
+  });
+  await sql`DELETE FROM uploaded_units WHERE year=${year} AND month=${month}`;
+  for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
+}
+
+async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: string) {
+  if (!records.length || records.length > 20000) throw new Error("No se encontraron filas válidas de Planilla.");
+  const periods = Array.from(new Set(records.map((record) => record.period)));
+  if (periods.length !== 1 || !periodPattern.test(periods[0])) throw new Error("La Planilla debe corresponder a un único periodo válido.");
+  if (records.some((record) => !hashPattern.test(record.personHash) || (record.hireDate && !datePattern.test(record.hireDate)) || (record.exitDate && !datePattern.test(record.exitDate)))) throw new Error("La Planilla contiene identificadores o fechas inválidas.");
+  const [year, month] = periods[0].split("-").map(Number);
+  const uploadedAt = new Date().toISOString();
+  const inserts = records.map((record) => {
+    const area = safeText(record.area, "SIN ÁREA");
+    const dotacion = safeText(record.dotacion, "SIN DOTACIÓN");
+    const macroRegion = safeText(record.macroRegion, "SIN REGIÓN", 80);
+    const region = safeText(record.region, "SIN CIUDAD");
+    const category = safeText(record.category, "SIN CATEGORÍA");
+    const personHash = protectedPersonHash(record.personHash);
+    const id = recordId([record.period, personHash, record.hireDate, record.exitDate, area, dotacion, macroRegion, region, category]);
+    return sql`INSERT INTO uploaded_payroll (id,year,month,person_hash,hire_date,exit_date,area,dotacion,macro_region,region,category,uploaded_at,source_name)
+      VALUES (${id},${year},${month},${personHash},${record.hireDate},${record.exitDate},${area},${dotacion},${macroRegion},${region},${category},${uploadedAt},${sourceName})`;
+  });
+  await sql`DELETE FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
+  for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
+  await rebuildPeriod(sql, periods[0], sourceName);
+  await sql`INSERT INTO uploaded_sources (id,source_type,period_label,source_name,uploaded_at,stored_rows) VALUES (${randomUUID()},'Planilla',${periodLabel(periods)},${sourceName},${uploadedAt},${records.length})`;
+  return periods[0];
+}
+
+async function saveTerms(sql: Database, records: TermRecord[], sourceName: string) {
+  if (!records.length || records.length > 20000) throw new Error("No se encontraron filas válidas de Términos.");
+  if (records.some((record) => !hashPattern.test(record.personHash) || !datePattern.test(record.termDate) || !safeText(record.reason, "", 120))) throw new Error("El archivo de Términos contiene identificadores, fechas o razones inválidas.");
+  const periods = Array.from(new Set(records.map((record) => record.termDate.slice(0, 7)))).sort();
+  const uploadedAt = new Date().toISOString();
+  const deletes = periods.map((key) => sql`DELETE FROM uploaded_terms WHERE LEFT(term_date, 7)=${key}`);
+  const inserts = records.map((record) => {
+    const reason = safeText(record.reason, "sin_clasificar", 120);
+    const personHash = protectedPersonHash(record.personHash);
+    const id = recordId([personHash, record.termDate]);
+    return sql`INSERT INTO uploaded_terms (id,person_hash,term_date,reason,uploaded_at,source_name) VALUES (${id},${personHash},${record.termDate},${reason},${uploadedAt},${sourceName})`;
+  });
+  for (const query of deletes) await query;
+  for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
+  for (const key of periods) await rebuildPeriod(sql, key, sourceName);
+  await sql`INSERT INTO uploaded_sources (id,source_type,period_label,source_name,uploaded_at,stored_rows) VALUES (${randomUUID()},'Términos',${periodLabel(periods)},${sourceName},${uploadedAt},${records.length})`;
+  return periods.length === 1 ? periods[0] : periodLabel(periods);
+}
+
+async function saveLegacy(sql: Database, rows: AggregateRow[], sourceName: string) {
+  if (!rows.length || rows.length > 5000) throw new Error("No se encontraron filas agregadas válidas.");
+  if (rows.some((row) => !Number.isInteger(row.y) || row.m < 1 || row.m > 12 || [row.h,row.i,row.c,row.v,row.x,row.d3,row.d6].some((value) => !Number.isFinite(value) || value < 0))) throw new Error("El archivo contiene indicadores inválidos.");
+  const uploadedAt = new Date().toISOString();
+  const queries = rows.map((row) => {
+    const id = [row.y,row.m,row.a,row.d,row.r,row.q].join("|");
+    const macroRegion = safeText(row.g, "SIN REGIÓN", 80);
+    return sql`INSERT INTO uploaded_units (id,year,month,area,dotacion,macro_region,region,category,headcount,hires,exits,employee,company,desert3,desert6,uploaded_at,source_name)
+      VALUES (${id},${row.y},${row.m},${row.a},${row.d},${macroRegion},${row.r},${row.q},${row.h},${row.i},${row.c},${row.v},${row.x},${row.d3},${row.d6},${uploadedAt},${sourceName})
+      ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
+  });
+  for (let index = 0; index < queries.length; index += 250) await sql.transaction(queries.slice(index, index + 250));
+  return `${rows[0].y}-${String(rows[0].m).padStart(2, "0")}`;
 }
 
 export async function GET() {
   try {
-    await ensureSchema();
     const sql = database();
-    const rows = await sql`SELECT year AS y, month AS m, area AS a, dotacion AS d, macro_region AS g, region AS r, category AS q, headcount AS h, hires AS i, exits AS c, employee AS v, company AS x, desert3 AS d3, desert6 AS d6 FROM uploaded_units ORDER BY year, month, macro_region, region, area, category`;
-    const uploads = await sql`SELECT year, month, source_name AS "sourceName", MAX(uploaded_at) AS "uploadedAt", COUNT(*)::INTEGER AS "storedRows" FROM uploaded_units GROUP BY year, month, source_name ORDER BY year DESC, month DESC, MAX(uploaded_at) DESC`;
-    return Response.json({ rows, uploads }, { headers: { "Cache-Control": "no-store" } });
+    await ensureSchema(sql);
+    const rows = await sql`SELECT year AS y,month AS m,area AS a,dotacion AS d,macro_region AS g,region AS r,category AS q,headcount AS h,hires AS i,exits AS c,employee AS v,company AS x,desert3 AS d3,desert6 AS d6 FROM uploaded_units ORDER BY year,month,macro_region,region,area,category`;
+    const uploads = await sql`SELECT source_type AS "sourceType",period_label AS "periodLabel",source_name AS "sourceName",uploaded_at AS "uploadedAt",stored_rows AS "storedRows" FROM uploaded_sources ORDER BY uploaded_at DESC`;
+    const legacyUploads = await sql`SELECT 'Carga consolidada' AS "sourceType", CONCAT(month,'/',year) AS "periodLabel", source_name AS "sourceName",MAX(uploaded_at) AS "uploadedAt",COUNT(*)::INTEGER AS "storedRows" FROM uploaded_units GROUP BY year,month,source_name ORDER BY MAX(uploaded_at) DESC`;
+    return Response.json({ rows, uploads: uploads.length ? uploads : legacyUploads }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No se pudo consultar la base de datos." }, { status: 500 });
   }
 }
 
 export async function POST(request: Request) {
-  if (!process.env.UPLOAD_PASSWORD || request.headers.get("x-upload-password") !== process.env.UPLOAD_PASSWORD) {
-    return Response.json({ error: "Clave de actualización incorrecta." }, { status: 401 });
-  }
+  if (!process.env.UPLOAD_PASSWORD || request.headers.get("x-upload-password") !== process.env.UPLOAD_PASSWORD) return Response.json({ error: "Clave de actualización incorrecta." }, { status: 401 });
   try {
-    const payload = await request.json() as { rows?: IncomingRow[]; sourceName?: string };
-    const rows = payload.rows ?? [];
-    if (!rows.length || rows.length > 5000) return Response.json({ error: "No se encontraron filas agregadas válidas." }, { status: 400 });
-    if (rows.some((row) => !Number.isInteger(row.y) || row.m < 1 || row.m > 12 || [row.h,row.i,row.c,row.v,row.x,row.d3,row.d6].some((value) => !Number.isFinite(value) || value < 0))) {
-      return Response.json({ error: "El archivo contiene indicadores inválidos." }, { status: 400 });
-    }
-    await ensureSchema();
+    const payload = await request.json() as { kind?: "payroll" | "terms"; records?: PayrollRecord[] | TermRecord[]; rows?: AggregateRow[]; sourceName?: string };
     const sql = database();
-    const sourceName = (payload.sourceName ?? "archivo mensual").slice(0, 180);
-    const uploadedAt = new Date().toISOString();
-    const queries = rows.map((row) => {
-      const id = [row.y, row.m, row.a, row.d, row.r, row.q].join("|");
-      const macroRegion = (row.g ?? "SIN REGIÓN").slice(0, 80);
-      return sql`INSERT INTO uploaded_units (id, year, month, area, dotacion, macro_region, region, category, headcount, hires, exits, employee, company, desert3, desert6, uploaded_at, source_name)
-        VALUES (${id}, ${row.y}, ${row.m}, ${row.a}, ${row.d}, ${macroRegion}, ${row.r}, ${row.q}, ${row.h}, ${row.i}, ${row.c}, ${row.v}, ${row.x}, ${row.d3}, ${row.d6}, ${uploadedAt}, ${sourceName})
-        ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region, headcount=EXCLUDED.headcount, hires=EXCLUDED.hires, exits=EXCLUDED.exits, employee=EXCLUDED.employee, company=EXCLUDED.company, desert3=EXCLUDED.desert3, desert6=EXCLUDED.desert6, uploaded_at=EXCLUDED.uploaded_at, source_name=EXCLUDED.source_name`;
-    });
-    for (let index = 0; index < queries.length; index += 250) {
-      await sql.transaction(queries.slice(index, index + 250));
-    }
-    return Response.json({ ok: true, rows: rows.length, period: `${rows[0].y}-${String(rows[0].m).padStart(2, "0")}` });
+    await ensureSchema(sql);
+    const sourceName = safeText(payload.sourceName, "archivo de actualización");
+    let period: string;
+    if (payload.kind === "payroll") period = await savePayroll(sql, (payload.records ?? []) as PayrollRecord[], sourceName);
+    else if (payload.kind === "terms") period = await saveTerms(sql, (payload.records ?? []) as TermRecord[], sourceName);
+    else period = await saveLegacy(sql, payload.rows ?? [], sourceName);
+    return Response.json({ ok: true, period });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No se pudo guardar la actualización." }, { status: 500 });
   }
