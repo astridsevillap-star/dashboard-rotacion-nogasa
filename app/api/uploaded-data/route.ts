@@ -70,7 +70,14 @@ async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
   const month = Number(match[2]);
   const payroll = await sql`SELECT person_hash, hire_date, exit_date, area, dotacion, macro_region, region, category
     FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
+  if (!payroll.length) return;
   const terms = await sql`SELECT person_hash, term_date, reason FROM uploaded_terms WHERE LEFT(term_date, 7)=${key}`;
+  const existing = await sql`SELECT area, dotacion, macro_region, region, category, employee, company, desert3, desert6
+    FROM uploaded_units WHERE year=${year} AND month=${month}`;
+  const existingMap = new Map(existing.map((row) => [
+    [row.area,row.dotacion,row.macro_region,row.region,row.category].join("|"),
+    { employee:Number(row.employee),company:Number(row.company),desert3:Number(row.desert3),desert6:Number(row.desert6) },
+  ]));
   const termMap = new Map(terms.map((row) => [`${row.person_hash}|${row.term_date}`, String(row.reason)]));
   const groups = new Map<string, { a:string;d:string;g:string;r:string;q:string;people:Set<string>;hires:Set<string>;exits:Set<string>;employee:Set<string>;company:Set<string>;d3:Set<string>;d6:Set<string> }>();
 
@@ -110,8 +117,13 @@ async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
   const uploadedAt = new Date().toISOString();
   const inserts = Array.from(groups.values()).map((group) => {
     const id = [year, month, group.a, group.d, group.r, group.q].join("|");
+    const previous = existingMap.get([group.a,group.d,group.g,group.r,group.q].join("|"));
+    const employee = terms.length ? group.employee.size : previous?.employee ?? 0;
+    const company = terms.length ? group.company.size : previous?.company ?? 0;
+    const desert3 = terms.length ? group.d3.size : previous?.desert3 ?? 0;
+    const desert6 = terms.length ? group.d6.size : previous?.desert6 ?? 0;
     return sql`INSERT INTO uploaded_units (id, year, month, area, dotacion, macro_region, region, category, headcount, hires, exits, employee, company, desert3, desert6, uploaded_at, source_name)
-      VALUES (${id},${year},${month},${group.a},${group.d},${group.g},${group.r},${group.q},${group.people.size},${group.hires.size},${group.exits.size},${group.employee.size},${group.company.size},${group.d3.size},${group.d6.size},${uploadedAt},${sourceName})
+      VALUES (${id},${year},${month},${group.a},${group.d},${group.g},${group.r},${group.q},${group.people.size},${group.hires.size},${group.exits.size},${employee},${company},${desert3},${desert6},${uploadedAt},${sourceName})
       ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
   });
   await sql`DELETE FROM uploaded_units WHERE year=${year} AND month=${month}`;
