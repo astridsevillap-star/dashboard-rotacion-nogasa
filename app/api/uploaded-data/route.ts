@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-type AggregateRow = { y:number;m:number;a:string;d:string;g?:string;r:string;q:string;h:number;i:number;c:number;v:number;x:number;d3:number;d6:number };
+type AggregateRow = { y:number;m:number;a:string;d:string;g?:string;r:string;q:string;h:number;hs?:number;he?:number;i:number;c:number;v:number;x:number;d3:number;d6:number };
 type PayrollRecord = { personHash:string;period:string;hireDate:string;exitDate:string;area:string;dotacion:string;macroRegion:string;region:string;category:string };
 type TermRecord = { personHash:string;termDate:string;reason:string };
 
@@ -31,6 +31,8 @@ async function ensureSchema(sql: Database) {
     desert6 INTEGER NOT NULL, uploaded_at TIMESTAMPTZ NOT NULL, source_name TEXT NOT NULL
   )`;
   await sql`ALTER TABLE uploaded_units ADD COLUMN IF NOT EXISTS macro_region TEXT NOT NULL DEFAULT 'SIN REGIÓN'`;
+  await sql`ALTER TABLE uploaded_units ADD COLUMN IF NOT EXISTS headcount_start INTEGER`;
+  await sql`ALTER TABLE uploaded_units ADD COLUMN IF NOT EXISTS headcount_end INTEGER`;
   await sql`CREATE TABLE IF NOT EXISTS uploaded_payroll (
     id TEXT PRIMARY KEY, year INTEGER NOT NULL, month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
     person_hash TEXT NOT NULL, hire_date TEXT NOT NULL DEFAULT '', exit_date TEXT NOT NULL DEFAULT '',
@@ -87,7 +89,9 @@ async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
     { employee:Number(row.employee),company:Number(row.company),desert3:Number(row.desert3),desert6:Number(row.desert6) },
   ]));
   const termMap = new Map(terms.map((row) => [`${row.person_hash}|${row.term_date}`, String(row.reason)]));
-  const groups = new Map<string, { a:string;d:string;g:string;r:string;q:string;people:Set<string>;hires:Set<string>;exits:Set<string>;employee:Set<string>;company:Set<string>;d3:Set<string>;d6:Set<string> }>();
+  const firstDay = `${key}-01`;
+  const lastDay = `${key}-${String(new Date(Date.UTC(year, month, 0)).getUTCDate()).padStart(2, "0")}`;
+  const groups = new Map<string, { a:string;d:string;g:string;r:string;q:string;people:Set<string>;peopleStart:Set<string>;peopleEnd:Set<string>;hires:Set<string>;exits:Set<string>;employee:Set<string>;company:Set<string>;d3:Set<string>;d6:Set<string> }>();
 
   for (const row of payroll) {
     const area = String(row.area);
@@ -99,9 +103,13 @@ async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
     const hireDate = String(row.hire_date);
     const exitDate = String(row.exit_date);
     const groupKey = [area, dotacion, macroRegion, region, category].join("|");
-    if (!groups.has(groupKey)) groups.set(groupKey, { a:area,d:dotacion,g:macroRegion,r:region,q:category,people:new Set(),hires:new Set(),exits:new Set(),employee:new Set(),company:new Set(),d3:new Set(),d6:new Set() });
+    if (!groups.has(groupKey)) groups.set(groupKey, { a:area,d:dotacion,g:macroRegion,r:region,q:category,people:new Set(),peopleStart:new Set(),peopleEnd:new Set(),hires:new Set(),exits:new Set(),employee:new Set(),company:new Set(),d3:new Set(),d6:new Set() });
     const group = groups.get(groupKey)!;
     group.people.add(personHash);
+    const hiredByStart = !hireDate || hireDate <= firstDay;
+    const hiredByEnd = !hireDate || hireDate <= lastDay;
+    if (hiredByStart && (!exitDate || exitDate >= firstDay)) group.peopleStart.add(personHash);
+    if (hiredByEnd && (!exitDate || exitDate >= lastDay)) group.peopleEnd.add(personHash);
     if (hireDate.startsWith(key)) group.hires.add(`${personHash}|${hireDate}`);
     if (exitDate.startsWith(key)) {
       const event = `${personHash}|${exitDate}`;
@@ -130,9 +138,9 @@ async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
     const company = terms.length ? group.company.size : previous?.company ?? 0;
     const desert3 = terms.length ? group.d3.size : previous?.desert3 ?? 0;
     const desert6 = terms.length ? group.d6.size : previous?.desert6 ?? 0;
-    return sql`INSERT INTO uploaded_units (id, year, month, area, dotacion, macro_region, region, category, headcount, hires, exits, employee, company, desert3, desert6, uploaded_at, source_name)
-      VALUES (${id},${year},${month},${group.a},${group.d},${group.g},${group.r},${group.q},${group.people.size},${group.hires.size},${group.exits.size},${employee},${company},${desert3},${desert6},${uploadedAt},${sourceName})
-      ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
+    return sql`INSERT INTO uploaded_units (id, year, month, area, dotacion, macro_region, region, category, headcount, headcount_start, headcount_end, hires, exits, employee, company, desert3, desert6, uploaded_at, source_name)
+      VALUES (${id},${year},${month},${group.a},${group.d},${group.g},${group.r},${group.q},${group.people.size},${group.peopleStart.size},${group.peopleEnd.size},${group.hires.size},${group.exits.size},${employee},${company},${desert3},${desert6},${uploadedAt},${sourceName})
+      ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,headcount_start=EXCLUDED.headcount_start,headcount_end=EXCLUDED.headcount_end,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
   });
   await sql`DELETE FROM uploaded_units WHERE year=${year} AND month=${month}`;
   for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
@@ -193,9 +201,11 @@ async function saveLegacy(sql: Database, rows: AggregateRow[], sourceName: strin
   const queries = rows.map((row) => {
     const id = [row.y,row.m,row.a,row.d,row.r,row.q].join("|");
     const macroRegion = safeText(row.g, "SIN REGIÓN", 80);
-    return sql`INSERT INTO uploaded_units (id,year,month,area,dotacion,macro_region,region,category,headcount,hires,exits,employee,company,desert3,desert6,uploaded_at,source_name)
-      VALUES (${id},${row.y},${row.m},${row.a},${row.d},${macroRegion},${row.r},${row.q},${row.h},${row.i},${row.c},${row.v},${row.x},${row.d3},${row.d6},${uploadedAt},${sourceName})
-      ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
+    const headcountStart = Number.isFinite(row.hs) ? row.hs! : row.h;
+    const headcountEnd = Number.isFinite(row.he) ? row.he! : row.h;
+    return sql`INSERT INTO uploaded_units (id,year,month,area,dotacion,macro_region,region,category,headcount,headcount_start,headcount_end,hires,exits,employee,company,desert3,desert6,uploaded_at,source_name)
+      VALUES (${id},${row.y},${row.m},${row.a},${row.d},${macroRegion},${row.r},${row.q},${row.h},${headcountStart},${headcountEnd},${row.i},${row.c},${row.v},${row.x},${row.d3},${row.d6},${uploadedAt},${sourceName})
+      ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,headcount_start=EXCLUDED.headcount_start,headcount_end=EXCLUDED.headcount_end,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
   });
   for (let index = 0; index < queries.length; index += 250) await sql.transaction(queries.slice(index, index + 250));
   return `${rows[0].y}-${String(rows[0].m).padStart(2, "0")}`;
@@ -205,7 +215,16 @@ export async function GET() {
   try {
     const sql = database();
     await ensureSchema(sql);
-    const rows = await sql`SELECT year AS y,month AS m,area AS a,dotacion AS d,macro_region AS g,region AS r,category AS q,headcount AS h,hires AS i,exits AS c,employee AS v,company AS x,desert3 AS d3,desert6 AS d6 FROM uploaded_units ORDER BY year,month,macro_region,region,area,category`;
+    const periodsToRebuild = await sql`SELECT units.year,units.month,MAX(units.source_name) AS source_name
+      FROM uploaded_units units
+      WHERE (units.headcount_start IS NULL OR units.headcount_end IS NULL)
+        AND EXISTS (SELECT 1 FROM uploaded_payroll payroll WHERE payroll.year=units.year AND payroll.month=units.month)
+      GROUP BY units.year,units.month`;
+    for (const item of periodsToRebuild) {
+      const key = `${item.year}-${String(item.month).padStart(2, "0")}`;
+      await rebuildPeriod(sql, key, String(item.source_name));
+    }
+    const rows = await sql`SELECT year AS y,month AS m,area AS a,dotacion AS d,macro_region AS g,region AS r,category AS q,headcount AS h,COALESCE(headcount_start,headcount) AS hs,COALESCE(headcount_end,headcount) AS he,hires AS i,exits AS c,employee AS v,company AS x,desert3 AS d3,desert6 AS d6 FROM uploaded_units ORDER BY year,month,macro_region,region,area,category`;
     const uploads = await sql`SELECT "sourceType","periodLabel","sourceName","uploadedAt","storedRows" FROM (
       SELECT DISTINCT ON (source_type,period_label)
         source_type AS "sourceType",period_label AS "periodLabel",source_name AS "sourceName",
@@ -223,7 +242,11 @@ export async function GET() {
       COUNT(*) FILTER (WHERE payroll.region='SIN CIUDAD')::INTEGER AS "missingRegion",
       COUNT(*) FILTER (WHERE payroll.category='SIN CATEGORÍA')::INTEGER AS "missingCategory",
       COALESCE((SELECT SUM(units.headcount) FROM uploaded_units units
-        WHERE units.year=payroll.year AND units.month=payroll.month),0)::INTEGER AS headcount
+        WHERE units.year=payroll.year AND units.month=payroll.month),0)::INTEGER AS headcount,
+      COALESCE((SELECT SUM(COALESCE(units.headcount_start,units.headcount)) FROM uploaded_units units
+        WHERE units.year=payroll.year AND units.month=payroll.month),0)::INTEGER AS "headcountStart",
+      COALESCE((SELECT SUM(COALESCE(units.headcount_end,units.headcount)) FROM uploaded_units units
+        WHERE units.year=payroll.year AND units.month=payroll.month),0)::INTEGER AS "headcountEnd"
       FROM uploaded_payroll payroll
       GROUP BY payroll.year,payroll.month
       ORDER BY payroll.year,payroll.month`;
