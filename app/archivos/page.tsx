@@ -19,6 +19,8 @@ type QualityRecord = {
   payrollRows: number | string;
   distinctPeople: number | string;
   headcount: number | string;
+  headcountStart: number | string;
+  headcountEnd: number | string;
   missingArea: number | string;
   missingDotacion: number | string;
   missingRegion: number | string;
@@ -125,23 +127,27 @@ export default function FilesPage() {
     </section>
 
     <section className="panel files-section">
-      <div className="panel-heading"><div><p className="kicker">QA DE DATOS</p><h2>Control de unicidad y consistencia</h2><p>Para cada periodo, las filas de Planilla, las personas únicas y la dotación consolidada deben coincidir.</p></div><span className="badge">{quality.length} {quality.length === 1 ? "periodo" : "periodos"}</span></div>
+      <div className="panel-heading"><div><p className="kicker">QA DE DATOS</p><h2>Control de unicidad y consistencia</h2><p>Para cada periodo, se valida la unicidad de personas y se muestran las dotaciones de inicio, cierre y promedio mensual.</p></div><span className="badge">{quality.length} {quality.length === 1 ? "periodo" : "periodos"}</span></div>
       {quality.length ? <div className="data-table-wrap"><table className="data-table">
-        <thead><tr><th>Periodo</th><th>Filas Planilla</th><th>Personas únicas</th><th>Dotación tablero</th><th>Gerencia / dotación vacía</th><th>Ubicación / categoría vacía</th><th>Resultado</th></tr></thead>
+        <thead><tr><th>Periodo</th><th>Filas Planilla</th><th>Personas únicas</th><th>Inicio</th><th>Cierre</th><th>Promedio mensual</th><th>Gerencia / dotación vacía</th><th>Ubicación / categoría vacía</th><th>Resultado</th></tr></thead>
         <tbody>{quality.map((item) => {
           const month = Number(item.month);
           const payrollRows = Number(item.payrollRows);
           const distinctPeople = Number(item.distinctPeople);
-          const headcount = Number(item.headcount);
+          const headcountStart = Number(item.headcountStart ?? item.headcount);
+          const headcountEnd = Number(item.headcountEnd ?? item.headcount);
+          const averageHeadcount = (headcountStart + headcountEnd) / 2;
           const missingCritical = Number(item.missingArea) + Number(item.missingDotacion);
           const missingOptional = Number(item.missingRegion) + Number(item.missingCategory);
-          const inconsistent = payrollRows !== distinctPeople || headcount !== distinctPeople || missingCritical > 0;
+          const inconsistent = payrollRows !== distinctPeople || headcountStart > distinctPeople || headcountEnd > distinctPeople || missingCritical > 0;
           const result = inconsistent ? "Revisar" : missingOptional > 0 ? "Advertencia" : "Conforme";
           return <tr key={`${item.year}-${month}`}>
             <td><strong>{monthNames[month - 1]} {item.year}</strong></td>
             <td>{payrollRows.toLocaleString("es-PE")}</td>
             <td>{distinctPeople.toLocaleString("es-PE")}</td>
-            <td>{headcount.toLocaleString("es-PE")}</td>
+            <td>{headcountStart.toLocaleString("es-PE")}</td>
+            <td>{headcountEnd.toLocaleString("es-PE")}</td>
+            <td>{averageHeadcount.toLocaleString("es-PE")}</td>
             <td>{missingCritical.toLocaleString("es-PE")}</td>
             <td>{missingOptional.toLocaleString("es-PE")}</td>
             <td><span className={`qa-pill ${inconsistent ? "qa-alert" : missingOptional > 0 ? "qa-warning" : "qa-ok"}`}>{result}</span></td>

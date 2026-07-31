@@ -24,7 +24,7 @@ type Month = {
 
 const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const MONTHLY_TARGET = 4;
-type DataRow = UnitRow & { y: number };
+type DataRow = UnitRow & { y: number; hs?: number; he?: number };
 const seedData: DataRow[] = unitData.map((row) => ({ ...row, y: 2026 }));
 const MACRO_REGIONS = ["Norte", "Sur", "Centro", "Oriente"] as const;
 const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
@@ -127,15 +127,18 @@ export default function Home() {
     const rows = allUnits.filter((row) => row.y === year && row.m === monthNumber && matchesFilters(row));
     const hires = rows.reduce((sum, row) => sum + row.i, 0);
     const exits = rows.reduce((sum, row) => sum + row.c, 0);
-    const headcountEnd = rows.reduce((sum, row) => sum + row.h, 0);
+    const hasMonthlyBounds = rows.length > 0 && rows.every((row) => typeof row.hs === "number" && typeof row.he === "number");
+    const headcountEnd = rows.reduce((sum, row) => sum + (hasMonthlyBounds ? row.he! : row.h), 0);
     const previousKey = availablePeriods[index - 1];
     const [previousYear, previousMonth] = previousKey ? previousKey.split("-").map(Number) : [0, 0];
     const isConsecutive = previousKey && previousYear * 12 + previousMonth === year * 12 + monthNumber - 1;
     const previousRows = isConsecutive
       ? allUnits.filter((row) => row.y === previousYear && row.m === previousMonth && matchesFilters(row))
       : [];
-    const previousEnd = previousRows.reduce((sum, row) => sum + row.h, 0);
-    const headcountStart = isConsecutive ? previousEnd : Math.max(0, headcountEnd - hires + exits);
+    const previousEnd = previousRows.reduce((sum, row) => sum + (typeof row.he === "number" ? row.he : row.h), 0);
+    const headcountStart = hasMonthlyBounds
+      ? rows.reduce((sum, row) => sum + row.hs!, 0)
+      : isConsecutive ? previousEnd : Math.max(0, headcountEnd - hires + exits);
     const headcount = (headcountStart + headcountEnd) / 2;
     return {
       key,
@@ -240,7 +243,7 @@ export default function Home() {
     const selectedPeriods = new Set(data.map((row) => row.key));
     const rows = allUnits.filter((row) => selectedPeriods.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group));
     const byArea = new Map<string, { exits: number; headcount: number }>();
-    rows.forEach((row) => { const value = byArea.get(row.a) ?? { exits: 0, headcount: 0 }; value.exits += row.v; value.headcount += row.h; byArea.set(row.a, value); });
+    rows.forEach((row) => { const value = byArea.get(row.a) ?? { exits: 0, headcount: 0 }; value.exits += row.v; value.headcount += ((row.hs ?? row.h) + (row.he ?? row.h)) / 2; byArea.set(row.a, value); });
     const top = Array.from(byArea.entries()).sort((a, b) => b[1].exits - a[1].exits || b[1].headcount - a[1].headcount)[0];
     return top ? { name: top[0], exits: top[1].exits, rate: top[1].headcount ? top[1].exits / top[1].headcount * 100 : 0, contribution: totals.employee ? top[1].exits / totals.employee * 100 : 0 } : null;
   }, [data, allUnits, area, group, areas, groups, totals.employee]);
@@ -251,7 +254,7 @@ export default function Home() {
       const map = new Map<string, { area: string; group: string; headcount: number; exits: number }>();
       allUnits.filter((row) => `${row.y}-${String(row.m).padStart(2, "0")}` === key && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group)).forEach((row) => {
         const item = map.get(row.a) ?? { area: row.a, group: row.d, headcount: 0, exits: 0 };
-        item.headcount += row.h; item.exits += row.v;
+        item.headcount += ((row.hs ?? row.h) + (row.he ?? row.h)) / 2; item.exits += row.v;
         if (item.group !== row.d) item.group = "Varias dotaciones";
         map.set(row.a, item);
       });
@@ -282,11 +285,14 @@ export default function Home() {
     const previousYear = month === 1 ? year - 1 : year;
     const previousMonth = month === 1 ? 12 : month - 1;
     const previousRows = geographyRows.filter((row) => matches(row, previousYear, previousMonth));
-    const headcountEnd = rows.reduce((sum, row) => sum + row.h, 0);
+    const hasMonthlyBounds = rows.every((row) => typeof row.hs === "number" && typeof row.he === "number");
+    const headcountEnd = rows.reduce((sum, row) => sum + (hasMonthlyBounds ? row.he! : row.h), 0);
     const hires = rows.reduce((sum, row) => sum + row.i, 0);
     const exits = rows.reduce((sum, row) => sum + row.c, 0);
-    const previousEnd = previousRows.reduce((sum, row) => sum + row.h, 0);
-    const headcountStart = previousRows.length ? previousEnd : Math.max(0, headcountEnd - hires + exits);
+    const previousEnd = previousRows.reduce((sum, row) => sum + (typeof row.he === "number" ? row.he : row.h), 0);
+    const headcountStart = hasMonthlyBounds
+      ? rows.reduce((sum, row) => sum + row.hs!, 0)
+      : previousRows.length ? previousEnd : Math.max(0, headcountEnd - hires + exits);
     const headcount = (headcountStart + headcountEnd) / 2;
     const employee = rows.reduce((sum, row) => sum + row.v, 0);
     return { headcount, employee, rate: headcount ? employee / headcount * 100 : 0 };
