@@ -48,3 +48,8 @@
 .independent-upload-fields button:disabled{opacity:.58;cursor:wait}
 .independent-upload-fields .upload-password{grid-column:1/-1}
 @media(max-width:700px){.independent-upload-fields{grid-template-columns:1fr}}
+
+.qa-pill{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;font-size:.68rem;font-weight:850;white-space:nowrap}
+.qa-ok{color:#087451;background:#e7f8f1}
+.qa-warning{color:#8a5a00;background:#fff4d6}
+.qa-alert{color:#a80018;background:#fde8eb}
