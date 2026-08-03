@@ -14,13 +14,29 @@ const periodPattern = /^(20\d{2})-(0[1-9]|1[0-2])$/;
 const datePattern = /^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const hashPattern = /^[a-f0-9]{64}$/;
 
-function database() {
-  const url = process.env.SUPABASE_DATABASE_URL;
-  if (!url) throw new Error("SUPABASE_DATABASE_URL no está configurada.");
-  return postgres(url, { ssl: "require", max: 5, idle_timeout: 20 });
+type Database = ReturnType<typeof postgres>;
+
+declare global {
+  // Reutiliza el cliente entre solicitudes atendidas por la misma instancia de Vercel.
+  // Sin este caché, cada GET/POST crea un pool nuevo que permanece abierto y agota
+  // rápidamente el límite del Session Pooler de Supabase.
+  var nogasaDatabase: Database | undefined;
 }
 
-type Database = ReturnType<typeof database>;
+function database(): Database {
+  const url = process.env.SUPABASE_DATABASE_URL;
+  if (!url) throw new Error("SUPABASE_DATABASE_URL no está configurada.");
+  if (!globalThis.nogasaDatabase) {
+    globalThis.nogasaDatabase = postgres(url, {
+      ssl: "require",
+      max: 1,
+      idle_timeout: 10,
+      connect_timeout: 15,
+      max_lifetime: 60 * 10,
+    });
+  }
+  return globalThis.nogasaDatabase;
+}
 
 async function ensureSchema(sql: Database) {
   await sql`CREATE TABLE IF NOT EXISTS uploaded_units (
@@ -143,7 +159,7 @@ async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
       ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,headcount_start=EXCLUDED.headcount_start,headcount_end=EXCLUDED.headcount_end,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
   });
   await sql`DELETE FROM uploaded_units WHERE year=${year} AND month=${month}`;
-  for (let index = 0; index < inserts.length; index += 250) await Promise.all(inserts.slice(index, index + 250));
+  for (const query of inserts) await query;
 }
 
 async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: string) {
@@ -166,7 +182,7 @@ async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: 
       VALUES (${id},${year},${month},${personHash},${record.hireDate},${record.exitDate},${area},${dotacion},${macroRegion},${region},${category},${uploadedAt},${sourceName})`;
   });
   await sql`DELETE FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
-  for (let index = 0; index < inserts.length; index += 250) await Promise.all(inserts.slice(index, index + 250));
+  for (const query of inserts) await query;
   await rebuildPeriod(sql, periods[0], sourceName);
   await replaceSource(sql, "Planilla", periods[0], sourceName, uploadedAt, records.length);
   return periods[0];
@@ -185,7 +201,7 @@ async function saveTerms(sql: Database, records: TermRecord[], sourceName: strin
     return sql`INSERT INTO uploaded_terms (id,person_hash,term_date,reason,uploaded_at,source_name) VALUES (${id},${personHash},${record.termDate},${reason},${uploadedAt},${sourceName})`;
   });
   for (const query of deletes) await query;
-  for (let index = 0; index < inserts.length; index += 250) await Promise.all(inserts.slice(index, index + 250));
+  for (const query of inserts) await query;
   for (const key of periods) {
     await rebuildPeriod(sql, key, sourceName);
     const storedRows = records.filter((record) => record.termDate.startsWith(key)).length;
@@ -207,7 +223,7 @@ async function saveLegacy(sql: Database, rows: AggregateRow[], sourceName: strin
       VALUES (${id},${row.y},${row.m},${row.a},${row.d},${macroRegion},${row.r},${row.q},${row.h},${headcountStart},${headcountEnd},${row.i},${row.c},${row.v},${row.x},${row.d3},${row.d6},${uploadedAt},${sourceName})
       ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,headcount_start=EXCLUDED.headcount_start,headcount_end=EXCLUDED.headcount_end,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
   });
-  for (let index = 0; index < queries.length; index += 250) await Promise.all(queries.slice(index, index + 250));
+  for (const query of queries) await query;
   return `${rows[0].y}-${String(rows[0].m).padStart(2, "0")}`;
 }
 
