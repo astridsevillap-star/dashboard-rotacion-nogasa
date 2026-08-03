@@ -148,7 +148,7 @@ async function payrollRecords(file: File): Promise<PayrollParseResult> {
     const identifier = text(valueFor(row, ["DNI", "Número de Documento", "N° Documento"]));
     const gerencia = text(valueFor(row, ["GERENCIA", "GERENCIA / ÁREA", "GERENCIA AREA"]));
     const sourceArea = text(valueFor(row, ["ÁREA", "AREA"]));
-    const organizationalArea = gerencia || sourceArea;
+    const organizationalArea = gerencia;
     const dotacion = text(valueFor(row, ["DOTACIÓN", "DOTACION", "GRUPO DE DOTACIÓN", "GRUPO DOTACION"]));
     const city = text(valueFor(row, ["CIUDAD", "DIVISIÓN", "DIVISION", "SEDE"])) || "SIN CIUDAD";
     if (!organizationalArea || !dotacion) {
@@ -163,7 +163,7 @@ async function payrollRecords(file: File): Promise<PayrollParseResult> {
       dotacion,
       macroRegion: macroRegionFor(city, text(valueFor(row, ["REGIÓN", "REGION", "MACROREGIÓN", "MACROREGION"]))),
       region: city,
-      category: text(valueFor(row, ["CATEGORÍA", "CATEGORIA"])) || (gerencia ? sourceArea : "") || "SIN CATEGORÍA",
+      category: text(valueFor(row, ["CATEGORÍA", "CATEGORIA"])) || sourceArea || "SIN CATEGORÍA",
     };
   });
   return { records, periods, duplicatesResolved };
