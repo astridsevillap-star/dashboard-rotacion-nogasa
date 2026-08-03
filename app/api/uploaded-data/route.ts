@@ -1,3 +1,4 @@
+// Batch upload API — deployment refresh 2026-08-03
 import { createHash, createHmac } from "node:crypto";
 import postgres from "postgres";
 
