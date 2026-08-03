@@ -151,8 +151,8 @@ async function payrollRecords(file: File): Promise<PayrollParseResult> {
     const organizationalArea = gerencia;
     const dotacion = text(valueFor(row, ["DOTACIÓN", "DOTACION", "GRUPO DE DOTACIÓN", "GRUPO DOTACION"]));
     const city = text(valueFor(row, ["CIUDAD", "DIVISIÓN", "DIVISION", "SEDE"])) || "SIN CIUDAD";
-    if (!organizationalArea || !dotacion) {
-      throw new Error("Todas las filas deben incluir GERENCIA (o AREA) y DOTACIÓN. Revise las cabeceras y los valores vacíos.");
+    if (!organizationalArea) {
+      throw new Error("Todas las filas deben incluir GERENCIA. ÁREA y DOTACIÓN pueden estar vacías en archivos históricos.");
     }
     return {
       personHash: hashes.get(identifier)!,
