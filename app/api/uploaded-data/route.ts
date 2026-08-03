@@ -169,6 +169,61 @@ async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
   for (const query of inserts) await query;
 }
 
+async function stagePayroll(sql: Database, phase: "start" | "append" | "commit", period: string, records: PayrollRecord[], sourceName: string, expectedRows?: number) {
+  if (!periodPattern.test(period)) throw new Error("El periodo de Planilla no es válido.");
+  const [year, month] = period.split("-").map(Number);
+
+  if (phase === "start") {
+    if (!Number.isInteger(expectedRows) || expectedRows! < 1 || expectedRows! > 20000) throw new Error("La cantidad esperada de filas no es válida.");
+    await sql`DELETE FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
+    return period;
+  }
+
+  if (phase === "append") {
+    if (!records.length || records.length > 250) throw new Error("El lote de Planilla debe contener entre 1 y 250 filas.");
+    if (records.some((record) => record.period !== period || !hashPattern.test(record.personHash) || (record.hireDate && !datePattern.test(record.hireDate)) || (record.exitDate && !datePattern.test(record.exitDate)))) {
+      throw new Error("El lote contiene identificadores, fechas o periodos inválidos.");
+    }
+    const uploadedAt = new Date().toISOString();
+    const values = records.map((record) => {
+      const personHash = protectedPersonHash(record.personHash);
+      return {
+        id: recordId([period, personHash]),
+        year,
+        month,
+        person_hash: personHash,
+        hire_date: record.hireDate,
+        exit_date: record.exitDate,
+        area: safeText(record.area, "SIN ÁREA"),
+        dotacion: safeText(record.dotacion, "SIN DOTACIÓN"),
+        macro_region: safeText(record.macroRegion, "SIN REGIÓN", 80),
+        region: safeText(record.region, "SIN CIUDAD"),
+        category: safeText(record.category, "SIN CATEGORÍA"),
+        uploaded_at: uploadedAt,
+        source_name: sourceName,
+      };
+    });
+    await sql`INSERT INTO uploaded_payroll ${sql(values,
+      "id","year","month","person_hash","hire_date","exit_date","area","dotacion","macro_region","region","category","uploaded_at","source_name"
+    )} ON CONFLICT (id) DO UPDATE SET
+      hire_date=EXCLUDED.hire_date,exit_date=EXCLUDED.exit_date,area=EXCLUDED.area,
+      dotacion=EXCLUDED.dotacion,macro_region=EXCLUDED.macro_region,region=EXCLUDED.region,
+      category=EXCLUDED.category,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
+    return period;
+  }
+
+  if (!Number.isInteger(expectedRows) || expectedRows! < 1 || expectedRows! > 20000) throw new Error("La cantidad esperada de filas no es válida.");
+  const countResult = await sql`SELECT COUNT(*)::INTEGER AS count FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
+  const storedRows = Number(countResult[0]?.count ?? 0);
+  if (storedRows !== expectedRows) {
+    throw new Error(`El periodo ${period} quedó incompleto: se recibieron ${storedRows} de ${expectedRows} filas. Vuelva a cargar el archivo; el periodo se reiniciará automáticamente.`);
+  }
+  await rebuildPeriod(sql, period, sourceName);
+  const uploadedAt = new Date().toISOString();
+  await replaceSource(sql, "Planilla", period, sourceName, uploadedAt, storedRows);
+  return period;
+}
+
 async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: string) {
   if (!records.length || records.length > 20000) throw new Error("No se encontraron filas válidas de Planilla.");
   const periods = Array.from(new Set(records.map((record) => record.period)));
@@ -283,12 +338,12 @@ export async function GET() {
 export async function POST(request: Request) {
   if (!process.env.UPLOAD_PASSWORD || request.headers.get("x-upload-password") !== process.env.UPLOAD_PASSWORD) return Response.json({ error: "Clave de actualización incorrecta." }, { status: 401 });
   try {
-    const payload = await request.json() as { kind?: "payroll" | "terms"; records?: PayrollRecord[] | TermRecord[]; rows?: AggregateRow[]; sourceName?: string };
+    const payload = await request.json() as { kind?: "payroll" | "terms"; phase?: "start" | "append" | "commit"; period?: string; expectedRows?: number; records?: PayrollRecord[] | TermRecord[]; rows?: AggregateRow[]; sourceName?: string };
     const sql = database();
     await ensureSchema(sql);
     const sourceName = safeText(payload.sourceName, "archivo de actualización");
     let period: string;
-    if (payload.kind === "payroll") period = await savePayroll(sql, (payload.records ?? []) as PayrollRecord[], sourceName);
+    if (payload.kind === "payroll" && payload.phase) period = await stagePayroll(sql, payload.phase, safeText(payload.period, "", 7), (payload.records ?? []) as PayrollRecord[], sourceName, payload.expectedRows);\n    else if (payload.kind === "payroll") period = await savePayroll(sql, (payload.records ?? []) as PayrollRecord[], sourceName);
     else if (payload.kind === "terms") period = await saveTerms(sql, (payload.records ?? []) as TermRecord[], sourceName);
     else period = await saveLegacy(sql, payload.rows ?? [], sourceName);
     return Response.json({ ok: true, period });
