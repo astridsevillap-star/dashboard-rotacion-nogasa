@@ -6,6 +6,18 @@ import * as XLSX from "xlsx";
 type Props = { onUploaded: () => Promise<void> | void };
 type SheetRow = Record<string, unknown>;
 type UploadKind = "payroll" | "terms";
+type PayrollParseResult = { records: PayrollRecord[]; periods: string[]; duplicatesResolved: number };
+type PayrollRecord = {
+  personHash: string;
+  period: string;
+  hireDate: string;
+  exitDate: string;
+  area: string;
+  dotacion: string;
+  macroRegion: string;
+  region: string;
+  category: string;
+};
 
 const text = (value: unknown) => String(value ?? "").trim();
 const normalized = (value: unknown) => text(value)
@@ -84,30 +96,55 @@ async function hashValues(values: string[]) {
   return new Map(pairs);
 }
 
-async function payrollRecords(file: File) {
+function periodFor(row: SheetRow) {
+  const date = dateValue(valueFor(row, ["FECHA DATA", "FECHA DE DATA", "MES PLANILLA"]));
+  return date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` : "";
+}
+
+function recordPriority(row: SheetRow, period: string) {
+  const [year, month] = period.split("-").map(Number);
+  const lastDay = new Date(year, month, 0);
+  const hireDate = dateValue(valueFor(row, ["FECHA INGRESO", "FECHA DE INGRESO", "FECHA INICIO"]));
+  const exitDate = dateValue(valueFor(row, ["FECHA CESE", "FECHA DE CESE", "FECHA TÉRMINO TRABAJO"]));
+  const activeAtClose = (!hireDate || hireDate <= lastDay) && (!exitDate || exitDate >= lastDay);
+  return [activeAtClose ? 1 : 0, hireDate?.getTime() ?? 0, exitDate?.getTime() ?? 0] as const;
+}
+
+function preferredRow(current: SheetRow, candidate: SheetRow, period: string) {
+  const currentPriority = recordPriority(current, period);
+  const candidatePriority = recordPriority(candidate, period);
+  for (let index = 0; index < currentPriority.length; index += 1) {
+    if (candidatePriority[index] !== currentPriority[index]) return candidatePriority[index] > currentPriority[index] ? candidate : current;
+  }
+  return candidate;
+}
+
+async function payrollRecords(file: File): Promise<PayrollParseResult> {
   const rows = await rowsFor(file, ["FECHA DATA", "DNI"]);
   if (!rows.length) throw new Error("El archivo de Planilla está vacío.");
-  const identifiers = rows.map((row) => text(valueFor(row, ["DNI", "Número de Documento", "N° Documento"]))).filter(Boolean);
-  if (identifiers.length !== rows.length) throw new Error("Todas las filas de Planilla deben incluir DNI.");
-  const seenIdentifiers = new Set<string>();
-  const duplicateIdentifiers = new Set(identifiers.filter((identifier) => {
-    if (seenIdentifiers.has(identifier)) return true;
-    seenIdentifiers.add(identifier);
-    return false;
-  }));
-  if (duplicateIdentifiers.size) {
-    throw new Error(`La Planilla contiene ${duplicateIdentifiers.size} DNI duplicado(s). Cada persona debe figurar una sola vez por periodo.`);
+  const selectedRows = new Map<string, SheetRow>();
+  let duplicatesResolved = 0;
+  for (const row of rows) {
+    const identifier = text(valueFor(row, ["DNI", "Número de Documento", "N° Documento"]));
+    if (!identifier) throw new Error("Todas las filas de Planilla deben incluir DNI.");
+    const period = periodFor(row);
+    if (!period) throw new Error("Todas las filas deben incluir una FECHA DATA válida.");
+    const key = `${period}|${identifier}`;
+    const current = selectedRows.get(key);
+    if (current) {
+      duplicatesResolved += 1;
+      selectedRows.set(key, preferredRow(current, row, period));
+    } else {
+      selectedRows.set(key, row);
+    }
   }
+  const uniqueRows = Array.from(selectedRows.values());
+  const identifiers = uniqueRows.map((row) => text(valueFor(row, ["DNI", "Número de Documento", "N° Documento"])));
   const hashes = await hashValues(identifiers);
-  const periods = new Set(rows.map((row) => {
-    const date = dateValue(valueFor(row, ["FECHA DATA", "FECHA DE DATA", "MES PLANILLA"]));
-    return date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` : "";
-  }));
-  if (periods.has("")) throw new Error("Todas las filas deben incluir una FECHA DATA válida.");
-  if (periods.size !== 1) throw new Error("La Planilla debe contener un solo periodo por carga.");
+  const periods = Array.from(new Set(uniqueRows.map(periodFor))).sort();
 
-  const records = rows.map((row) => {
-    const period = Array.from(periods)[0];
+  const records = uniqueRows.map((row) => {
+    const period = periodFor(row);
     const identifier = text(valueFor(row, ["DNI", "Número de Documento", "N° Documento"]));
     const gerencia = text(valueFor(row, ["GERENCIA", "GERENCIA / ÁREA", "GERENCIA AREA"]));
     const sourceArea = text(valueFor(row, ["ÁREA", "AREA"]));
@@ -129,7 +166,7 @@ async function payrollRecords(file: File) {
       category: text(valueFor(row, ["CATEGORÍA", "CATEGORIA"])) || (gerencia ? sourceArea : "") || "SIN CATEGORÍA",
     };
   });
-  return records;
+  return { records, periods, duplicatesResolved };
 }
 
 async function termRecords(file: File) {
@@ -163,16 +200,40 @@ export default function MonthlyUploader({ onUploaded }: Props) {
     setBusy(kind);
     setStatus(`Validando y procesando ${kind === "payroll" ? "Planilla" : "Términos"}…`);
     try {
-      const records = kind === "payroll" ? await payrollRecords(file) : await termRecords(file);
-      const response = await fetch("/api/uploaded-data", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-upload-password": password },
-        body: JSON.stringify({ kind, records, sourceName: file.name }),
-      });
-      const result = await response.json() as { error?: string; period?: string };
-      if (!response.ok) throw new Error(result.error ?? "No se pudo guardar la actualización.");
+      let periodLabel = "";
+      let duplicatesResolved = 0;
+      if (kind === "payroll") {
+        const parsed = await payrollRecords(file);
+        duplicatesResolved = parsed.duplicatesResolved;
+        for (let index = 0; index < parsed.periods.length; index += 1) {
+          const period = parsed.periods[index];
+          setStatus(`Guardando Planilla · ${period} (${index + 1} de ${parsed.periods.length})…`);
+          const records = parsed.records.filter((record) => record.period === period);
+          const response = await fetch("/api/uploaded-data", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-upload-password": password },
+            body: JSON.stringify({ kind, records, sourceName: file.name }),
+          });
+          const result = await response.json() as { error?: string; period?: string };
+          if (!response.ok) throw new Error(`${period}: ${result.error ?? "No se pudo guardar la actualización."}`);
+        }
+        periodLabel = parsed.periods.length === 1
+          ? parsed.periods[0]
+          : `${parsed.periods[0]} a ${parsed.periods.at(-1)} · ${parsed.periods.length} periodos`;
+      } else {
+        const records = await termRecords(file);
+        const response = await fetch("/api/uploaded-data", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-upload-password": password },
+          body: JSON.stringify({ kind, records, sourceName: file.name }),
+        });
+        const result = await response.json() as { error?: string; period?: string };
+        if (!response.ok) throw new Error(result.error ?? "No se pudo guardar la actualización.");
+        periodLabel = result.period ?? "";
+      }
       await onUploaded();
-      setStatus(`${kind === "payroll" ? "Planilla" : "Términos"} incorporado correctamente${result.period ? ` · ${result.period}` : ""}. El dashboard ya fue recalculado.`);
+      const duplicateNote = duplicatesResolved ? ` · ${duplicatesResolved} duplicidad(es) resuelta(s) por vigencia al cierre` : "";
+      setStatus(`${kind === "payroll" ? "Planilla" : "Términos"} incorporado correctamente${periodLabel ? ` · ${periodLabel}` : ""}${duplicateNote}. El dashboard ya fue recalculado.`);
       if (kind === "payroll") setPayrollFile(null); else setTermsFile(null);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Ocurrió un error al procesar el archivo.");
@@ -185,7 +246,7 @@ export default function MonthlyUploader({ onUploaded }: Props) {
     <div>
       <p className="kicker">ACTUALIZACIÓN INDEPENDIENTE</p>
       <h3>Cargar Planilla o Términos</h3>
-      <p>Cada archivo se procesa por separado. No necesita cargar Términos para incorporar una Planilla, ni volver a cargar la Planilla cuando actualice Términos.</p>
+      <p>Cada archivo se procesa por separado. La Planilla puede contener uno o varios meses; cada periodo se reemplaza de forma independiente. No necesita cargar Términos para incorporar una Planilla.</p>
     </div>
     <div className="independent-upload-fields">
       <label className="upload-password">Clave de actualización<input type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} /></label>
