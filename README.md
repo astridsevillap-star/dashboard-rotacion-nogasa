@@ -1,6 +1,6 @@
 # Dashboard de Rotación Nogasa — GitHub + Vercel
 
-Proyecto Next.js listo para abrir en VS Code, guardar en GitHub y publicar en Vercel. Los datos de los meses nuevos se conservan en una base PostgreSQL de Neon conectada a Vercel.
+Proyecto Next.js listo para abrir en VS Code, guardar en GitHub y publicar en Vercel. Los datos se conservan en PostgreSQL de Supabase, dentro de la organización Nogasa.
 
 ## Lo que conserva esta versión
 
@@ -55,7 +55,7 @@ Reemplaza `TU-USUARIO` por el usuario de tu otra cuenta de GitHub.
 4. Vercel detectará automáticamente Next.js.
 5. Todavía no presiones el despliegue final hasta completar la base de datos.
 
-## 4. Crear la base persistente
+## 4. Conectar Supabase
 
 1. Dentro del proyecto de Vercel abre **Storage**.
 2. Selecciona **Create Database** o **Marketplace Database**.
