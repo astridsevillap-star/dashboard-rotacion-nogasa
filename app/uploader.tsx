@@ -216,17 +216,30 @@ export default function MonthlyUploader({ onUploaded }: Props) {
       if (kind === "payroll") {
         const parsed = await payrollRecords(file);
         duplicatesResolved = parsed.duplicatesResolved;
-        for (let index = 0; index < parsed.periods.length; index += 1) {
-          const period = parsed.periods[index];
-          setStatus(`Guardando Planilla · ${period} (${index + 1} de ${parsed.periods.length})…`);
-          const records = parsed.records.filter((record) => record.period === period);
+        const chunkSize = 200;
+        const sendStage = async (payload: Record<string, unknown>) => {
           const response = await fetch("/api/uploaded-data", {
             method: "POST",
             headers: { "content-type": "application/json", "x-upload-password": password },
-            body: JSON.stringify({ kind, records, sourceName: file.name }),
+            body: JSON.stringify({ kind, sourceName: file.name, ...payload }),
           });
           const result = await responseResult(response);
-          if (!response.ok) throw new Error(`${period}: ${result.error ?? "No se pudo guardar la actualización."}`);
+          if (!response.ok) throw new Error(result.error ?? "No se pudo guardar la actualización.");
+          return result;
+        };
+        for (let index = 0; index < parsed.periods.length; index += 1) {
+          const period = parsed.periods[index];
+          const records = parsed.records.filter((record) => record.period === period);
+          const totalChunks = Math.ceil(records.length / chunkSize);
+          setStatus(`Preparando Planilla · ${period} (${index + 1} de ${parsed.periods.length})…`);
+          await sendStage({ phase: "start", period, expectedRows: records.length });
+          for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+            const chunk = records.slice(chunkIndex * chunkSize, (chunkIndex + 1) * chunkSize);
+            setStatus(`Guardando Planilla · ${period} · lote ${chunkIndex + 1} de ${totalChunks} (${index + 1} de ${parsed.periods.length} periodos)…`);
+            await sendStage({ phase: "append", period, records: chunk });
+          }
+          setStatus(`Verificando Planilla · ${period} (${index + 1} de ${parsed.periods.length})…`);
+          await sendStage({ phase: "commit", period, expectedRows: records.length });
         }
         periodLabel = parsed.periods.length === 1
           ? parsed.periods[0]
