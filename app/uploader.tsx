@@ -20,6 +20,17 @@ type PayrollRecord = {
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
+async function responseResult(response: Response): Promise<{ error?: string; period?: string }> {
+  const raw = await response.text();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as { error?: string; period?: string };
+  } catch {
+    throw new Error(response.ok
+      ? "El servidor devolvió una respuesta inesperada."
+      : "La carga fue interrumpida por el servidor. Espere unos segundos e inténtelo nuevamente.");
+  }
+}
 const normalized = (value: unknown) => text(value)
   .normalize("NFD")
   .replace(/[\u0300-\u036f]/g, "")
@@ -214,7 +225,7 @@ export default function MonthlyUploader({ onUploaded }: Props) {
             headers: { "content-type": "application/json", "x-upload-password": password },
             body: JSON.stringify({ kind, records, sourceName: file.name }),
           });
-          const result = await response.json() as { error?: string; period?: string };
+          const result = await responseResult(response);
           if (!response.ok) throw new Error(`${period}: ${result.error ?? "No se pudo guardar la actualización."}`);
         }
         periodLabel = parsed.periods.length === 1
@@ -227,7 +238,7 @@ export default function MonthlyUploader({ onUploaded }: Props) {
           headers: { "content-type": "application/json", "x-upload-password": password },
           body: JSON.stringify({ kind, records, sourceName: file.name }),
         });
-        const result = await response.json() as { error?: string; period?: string };
+        const result = await responseResult(response);
         if (!response.ok) throw new Error(result.error ?? "No se pudo guardar la actualización.");
         periodLabel = result.period ?? "";
       }
