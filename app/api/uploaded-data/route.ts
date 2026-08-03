@@ -143,7 +143,7 @@ async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
       ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,headcount_start=EXCLUDED.headcount_start,headcount_end=EXCLUDED.headcount_end,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
   });
   await sql`DELETE FROM uploaded_units WHERE year=${year} AND month=${month}`;
-  for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
+  for (let index = 0; index < inserts.length; index += 250) await Promise.all(inserts.slice(index, index + 250));
 }
 
 async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: string) {
@@ -166,7 +166,7 @@ async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: 
       VALUES (${id},${year},${month},${personHash},${record.hireDate},${record.exitDate},${area},${dotacion},${macroRegion},${region},${category},${uploadedAt},${sourceName})`;
   });
   await sql`DELETE FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
-  for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
+  for (let index = 0; index < inserts.length; index += 250) await Promise.all(inserts.slice(index, index + 250));
   await rebuildPeriod(sql, periods[0], sourceName);
   await replaceSource(sql, "Planilla", periods[0], sourceName, uploadedAt, records.length);
   return periods[0];
@@ -185,7 +185,7 @@ async function saveTerms(sql: Database, records: TermRecord[], sourceName: strin
     return sql`INSERT INTO uploaded_terms (id,person_hash,term_date,reason,uploaded_at,source_name) VALUES (${id},${personHash},${record.termDate},${reason},${uploadedAt},${sourceName})`;
   });
   for (const query of deletes) await query;
-  for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
+  for (let index = 0; index < inserts.length; index += 250) await Promise.all(inserts.slice(index, index + 250));
   for (const key of periods) {
     await rebuildPeriod(sql, key, sourceName);
     const storedRows = records.filter((record) => record.termDate.startsWith(key)).length;
