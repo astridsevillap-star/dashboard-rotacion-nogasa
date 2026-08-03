@@ -27,12 +27,19 @@ function database(): Database {
   const url = process.env.SUPABASE_DATABASE_URL;
   if (!url) throw new Error("SUPABASE_DATABASE_URL no está configurada.");
   if (!globalThis.nogasaDatabase) {
-    globalThis.nogasaDatabase = postgres(url, {
+    const connectionUrl = new URL(url);
+    // Vercel es serverless: el Transaction Pooler (6543) multiplexa conexiones
+    // y evita que cada instancia ocupe permanentemente un cliente del Session Pooler.
+    if (connectionUrl.hostname.includes("pooler.supabase.com") && connectionUrl.port === "5432") {
+      connectionUrl.port = "6543";
+    }
+    globalThis.nogasaDatabase = postgres(connectionUrl.toString(), {
       ssl: "require",
       max: 1,
-      idle_timeout: 10,
+      prepare: false,
+      idle_timeout: 2,
       connect_timeout: 15,
-      max_lifetime: 60 * 10,
+      max_lifetime: 60,
     });
   }
   return globalThis.nogasaDatabase;
