@@ -174,7 +174,8 @@ async function stagePayroll(sql: Database, phase: "start" | "append" | "commit",
   const [year, month] = period.split("-").map(Number);
 
   if (phase === "start") {
-    const expected = Number(expectedRows);\n    if (!Number.isInteger(expected) || expected < 1 || expected > 20000) throw new Error("La cantidad esperada de filas no es válida.");
+    const expected = Number(expectedRows);
+    if (!Number.isInteger(expected) || expected < 1 || expected > 20000) throw new Error("La cantidad esperada de filas no es válida.");
     await sql`DELETE FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
     return period;
   }
