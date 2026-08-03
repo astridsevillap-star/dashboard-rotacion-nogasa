@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
-import { neon } from "@neondatabase/serverless";
+import postgres from "postgres";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,9 +15,9 @@ const datePattern = /^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const hashPattern = /^[a-f0-9]{64}$/;
 
 function database() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL no está configurada.");
-  return neon(url);
+  const url = process.env.SUPABASE_DATABASE_URL;
+  if (!url) throw new Error("SUPABASE_DATABASE_URL no está configurada.");
+  return postgres(url, { ssl: "require", max: 5, idle_timeout: 20 });
 }
 
 type Database = ReturnType<typeof database>;
@@ -143,7 +143,7 @@ async function rebuildPeriod(sql: Database, key: string, sourceName: string) {
       ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,headcount_start=EXCLUDED.headcount_start,headcount_end=EXCLUDED.headcount_end,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
   });
   await sql`DELETE FROM uploaded_units WHERE year=${year} AND month=${month}`;
-  for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
+  for (let index = 0; index < inserts.length; index += 250) await Promise.all(inserts.slice(index, index + 250));
 }
 
 async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: string) {
@@ -166,7 +166,7 @@ async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: 
       VALUES (${id},${year},${month},${personHash},${record.hireDate},${record.exitDate},${area},${dotacion},${macroRegion},${region},${category},${uploadedAt},${sourceName})`;
   });
   await sql`DELETE FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
-  for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
+  for (let index = 0; index < inserts.length; index += 250) await Promise.all(inserts.slice(index, index + 250));
   await rebuildPeriod(sql, periods[0], sourceName);
   await replaceSource(sql, "Planilla", periods[0], sourceName, uploadedAt, records.length);
   return periods[0];
@@ -185,7 +185,7 @@ async function saveTerms(sql: Database, records: TermRecord[], sourceName: strin
     return sql`INSERT INTO uploaded_terms (id,person_hash,term_date,reason,uploaded_at,source_name) VALUES (${id},${personHash},${record.termDate},${reason},${uploadedAt},${sourceName})`;
   });
   for (const query of deletes) await query;
-  for (let index = 0; index < inserts.length; index += 250) await sql.transaction(inserts.slice(index, index + 250));
+  for (let index = 0; index < inserts.length; index += 250) await Promise.all(inserts.slice(index, index + 250));
   for (const key of periods) {
     await rebuildPeriod(sql, key, sourceName);
     const storedRows = records.filter((record) => record.termDate.startsWith(key)).length;
@@ -207,7 +207,7 @@ async function saveLegacy(sql: Database, rows: AggregateRow[], sourceName: strin
       VALUES (${id},${row.y},${row.m},${row.a},${row.d},${macroRegion},${row.r},${row.q},${row.h},${headcountStart},${headcountEnd},${row.i},${row.c},${row.v},${row.x},${row.d3},${row.d6},${uploadedAt},${sourceName})
       ON CONFLICT (id) DO UPDATE SET macro_region=EXCLUDED.macro_region,headcount=EXCLUDED.headcount,headcount_start=EXCLUDED.headcount_start,headcount_end=EXCLUDED.headcount_end,hires=EXCLUDED.hires,exits=EXCLUDED.exits,employee=EXCLUDED.employee,company=EXCLUDED.company,desert3=EXCLUDED.desert3,desert6=EXCLUDED.desert6,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
   });
-  for (let index = 0; index < queries.length; index += 250) await sql.transaction(queries.slice(index, index + 250));
+  for (let index = 0; index < queries.length; index += 250) await Promise.all(queries.slice(index, index + 250));
   return `${rows[0].y}-${String(rows[0].m).padStart(2, "0")}`;
 }
 
