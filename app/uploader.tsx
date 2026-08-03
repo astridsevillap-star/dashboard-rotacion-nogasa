@@ -155,7 +155,7 @@ async function payrollRecords(file: File): Promise<PayrollParseResult> {
       throw new Error("Todas las filas deben incluir GERENCIA (o AREA) y DOTACIÓN. Revise las cabeceras y los valores vacíos.");
     }
     return {
-      personHash: hashes.get(identifier),
+      personHash: hashes.get(identifier)!,
       period,
       hireDate: isoDay(dateValue(valueFor(row, ["FECHA INGRESO", "FECHA DE INGRESO", "FECHA INICIO"]))),
       exitDate: isoDay(dateValue(valueFor(row, ["FECHA CESE", "FECHA DE CESE", "FECHA TÉRMINO TRABAJO"]))),
