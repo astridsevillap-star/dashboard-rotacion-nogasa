@@ -57,13 +57,12 @@ Reemplaza `TU-USUARIO` por el usuario de tu otra cuenta de GitHub.
 
 ## 4. Conectar Supabase
 
-1. Dentro del proyecto de Vercel abre **Storage**.
-2. Selecciona **Create Database** o **Marketplace Database**.
-3. Elige **Neon Postgres**.
-4. Conecta la base al proyecto y selecciona una región cercana. Si aparece una región de Sudamérica, úsala; de lo contrario, elige la más cercana disponible.
-5. Verifica en **Settings > Environment Variables** que exista `DATABASE_URL`.
-
-Vercel inyecta esa conexión automáticamente. La tabla se crea sola durante el primer ingreso al dashboard, por lo que no necesitas ejecutar SQL manualmente.
+1. Abra el proyecto de la organización **Nogasa** en Supabase.
+2. Pulse **Connect > Direct > Connection string**.
+3. Seleccione **Session pooler** y copie la URI del puerto `5432`.
+4. Sustituya `[YOUR-PASSWORD]` por la contraseña de la base de datos, sin dejar corchetes.
+5. En **Vercel > Project > Settings > Environment Variables**, cree `SUPABASE_DATABASE_URL`.
+6. Guarde la variable como sensible para **Production** y **Preview**. No utilice el prefijo `NEXT_PUBLIC_`.
 
 ## 5. Crear la clave para actualizar archivos
 
