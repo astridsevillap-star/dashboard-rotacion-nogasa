@@ -213,7 +213,8 @@ async function stagePayroll(sql: Database, phase: "start" | "append" | "commit",
     return period;
   }
 
-  const expected = Number(expectedRows);\n    if (!Number.isInteger(expected) || expected < 1 || expected > 20000) throw new Error("La cantidad esperada de filas no es válida.");
+  const expected = Number(expectedRows);
+    if (!Number.isInteger(expected) || expected < 1 || expected > 20000) throw new Error("La cantidad esperada de filas no es válida.");
   const countResult = await sql`SELECT COUNT(*)::INTEGER AS count FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
   const storedRows = Number(countResult[0]?.count ?? 0);
   if (storedRows !== expectedRows) {
