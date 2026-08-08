@@ -26,15 +26,16 @@ const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Juli
 const MONTHLY_TARGET = 4;
 type DataRow = UnitRow & { y: number; hs?: number; he?: number };
 const seedData: DataRow[] = unitData.map((row) => ({ ...row, y: 2026 }));
-const MACRO_REGIONS = ["Norte", "Sur", "Centro", "Oriente"] as const;
+const MACRO_REGIONS = ["Lima", "Norte", "Sur", "Centro", "Oriente"] as const;
 const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
 const macroRegionFor = (row: DataRow) => {
   const named = plain(row.g ?? "");
+  const place = plain(row.r);
+  if (named.includes("LIMA") || ["LIMA","LOS OLIVOS","SAN LUIS"].some((name) => place.includes(name))) return "Lima";
   if (named.includes("NORTE")) return "Norte";
   if (named.includes("SUR")) return "Sur";
   if (named.includes("ORIENTE") || named.includes("SELVA")) return "Oriente";
   if (named.includes("CENTRO")) return "Centro";
-  const place = plain(row.r);
   if (["IQUITOS","PUCALLPA","TARAPOTO","MOYOBAMBA","JUANJUI","TINGO MARIA","PUERTO MALDONADO","LA MERCED"].some((name) => place.includes(name))) return "Oriente";
   if (["AREQUIPA","CUSCO","PUNO","TACNA","MOQUEGUA","ICA","AYACUCHO"].some((name) => place.includes(name))) return "Sur";
   if (["TUMBES","PIURA","SULLANA","TALARA","CHICLAYO","LAMBAYEQUE","TRUJILLO","CHIMBOTE","HUARAZ","CAJAMARCA","JAEN"].some((name) => place.includes(name))) return "Norte";
