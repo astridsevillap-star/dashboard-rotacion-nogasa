@@ -24,10 +24,12 @@ type Month = {
 
 const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const MONTHLY_TARGET = 4;
+const SMALL_AREA_THRESHOLD = 10;
 type DataRow = UnitRow & { y: number; hs?: number; he?: number };
 const seedData: DataRow[] = unitData.map((row) => ({ ...row, y: 2026 }));
 const MACRO_REGIONS = ["Lima", "Norte", "Sur", "Centro", "Oriente"] as const;
 const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+const displayHeadcount = (value: number) => Math.ceil(value).toLocaleString("es-PE");
 const macroRegionFor = (row: DataRow) => {
   const named = plain(row.g ?? "");
   const place = plain(row.r);
@@ -243,11 +245,24 @@ export default function Home() {
   const impactArea = useMemo(() => {
     const selectedPeriods = new Set(data.map((row) => row.key));
     const rows = allUnits.filter((row) => selectedPeriods.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group));
-    const byArea = new Map<string, { exits: number; headcount: number }>();
-    rows.forEach((row) => { const value = byArea.get(row.a) ?? { exits: 0, headcount: 0 }; value.exits += row.v; value.headcount += ((row.hs ?? row.h) + (row.he ?? row.h)) / 2; byArea.set(row.a, value); });
-    const top = Array.from(byArea.entries()).sort((a, b) => b[1].exits - a[1].exits || b[1].headcount - a[1].headcount)[0];
-    return top ? { name: top[0], exits: top[1].exits, rate: top[1].headcount ? top[1].exits / top[1].headcount * 100 : 0, contribution: totals.employee ? top[1].exits / totals.employee * 100 : 0 } : null;
-  }, [data, allUnits, area, group, areas, groups, totals.employee]);
+    const byArea = new Map<string, { exits: number; headcountExposure: number }>();
+    rows.forEach((row) => {
+      const value = byArea.get(row.a) ?? { exits: 0, headcountExposure: 0 };
+      value.exits += row.v;
+      value.headcountExposure += ((row.hs ?? row.h) + (row.he ?? row.h)) / 2;
+      byArea.set(row.a, value);
+    });
+    const months = Math.max(data.length, 1);
+    const scopeExposure = Array.from(byArea.values()).reduce((sum, item) => sum + item.headcountExposure, 0);
+    const ranked = Array.from(byArea.entries()).map(([name, item]) => {
+      const averageHeadcount = item.headcountExposure / months;
+      const rate = item.headcountExposure ? item.exits / item.headcountExposure * 100 : 0;
+      const impactPoints = scopeExposure ? item.exits / scopeExposure * 100 : 0;
+      const smallBase = averageHeadcount < SMALL_AREA_THRESHOLD;
+      return { name, exits: item.exits, headcount: averageHeadcount, rate, impactPoints, smallBase };
+    }).filter((item) => item.exits > 0).sort((a, b) => b.impactPoints - a.impactPoints || b.exits - a.exits || b.rate - a.rate);
+    return ranked[0] ?? null;
+  }, [data, allUnits, area, group, areas, groups]);
   const reviewAreas = useMemo(() => {
     if (!currentMonth.key) return [];
     const previousMonth = data.length > 1 ? data[data.length - 2] : null;
@@ -255,7 +270,8 @@ export default function Home() {
       const map = new Map<string, { area: string; group: string; headcount: number; exits: number }>();
       allUnits.filter((row) => `${row.y}-${String(row.m).padStart(2, "0")}` === key && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group)).forEach((row) => {
         const item = map.get(row.a) ?? { area: row.a, group: row.d, headcount: 0, exits: 0 };
-        item.headcount += ((row.hs ?? row.h) + (row.he ?? row.h)) / 2; item.exits += row.v;
+        item.headcount += ((row.hs ?? row.h) + (row.he ?? row.h)) / 2;
+        item.exits += row.v;
         if (item.group !== row.d) item.group = "Varias dotaciones";
         map.set(row.a, item);
       });
@@ -263,12 +279,24 @@ export default function Home() {
     };
     const current = aggregate(currentMonth.key);
     const previous = previousMonth ? aggregate(previousMonth.key) : new Map<string, { area: string; group: string; headcount: number; exits: number }>();
+    const scopeHeadcount = Array.from(current.values()).reduce((sum, item) => sum + item.headcount, 0);
     return Array.from(current.values()).map((item) => {
       const rate = item.headcount ? item.exits / item.headcount * 100 : 0;
+      const impactPoints = scopeHeadcount ? item.exits / scopeHeadcount * 100 : 0;
       const old = previous.get(item.area);
       const oldRate = old?.headcount ? old.exits / old.headcount * 100 : null;
-      return { ...item, rate, variation: oldRate === null ? null : rate - oldRate };
-    }).filter((item) => item.exits > 0).sort((a, b) => b.exits - a.exits || b.rate - a.rate).slice(0, 5);
+      const smallBase = item.headcount < SMALL_AREA_THRESHOLD;
+      const priority = smallBase
+        ? "Base pequeña"
+        : rate > MONTHLY_TARGET && item.exits >= 2
+          ? "Prioridad alta"
+          : item.exits >= 3
+            ? "Impacto por volumen"
+            : rate > MONTHLY_TARGET
+              ? "Vigilar"
+              : "Controlado";
+      return { ...item, rate, impactPoints, smallBase, priority, variation: oldRate === null ? null : rate - oldRate };
+    }).filter((item) => item.exits > 0).sort((a, b) => b.impactPoints - a.impactPoints || b.exits - a.exits || b.rate - a.rate).slice(0, 5);
   }, [currentMonth, data, allUnits, area, group, areas, groups]);
 
   const latestPeriod = availablePeriods.filter((key) => key.startsWith(`${currentYear}-`)).at(-1) ?? `${currentYear}-01`;
@@ -362,7 +390,7 @@ export default function Home() {
       <section className="metric-strip">
         <article><span>Ingresos</span><strong>{summaryHires}</strong><small>{isAllPeriods ? "eventos acumulados" : "eventos del mes"}</small></article>
         <article><span>Ceses</span><strong>{summaryExits}</strong><small>{isAllPeriods ? "eventos acumulados" : "eventos del mes"}</small></article>
-        <article><span>Dotación</span><strong>{summaryHeadcount.toLocaleString("es-PE")}</strong><small>{isAllPeriods ? "promedio mensual del periodo" : "promedio del mes"}</small></article>
+        <article><span>Dotación</span><strong>{displayHeadcount(summaryHeadcount)}</strong><small>{isAllPeriods ? "promedio mensual del periodo · visual redondeado" : "promedio del mes · visual redondeado"}</small></article>
         <article><span>Rotación total</span><strong>{summaryTurnover.toFixed(2)}%</strong><small>{isAllPeriods ? "promedio mensual del periodo" : "resultado del mes"}</small></article>
         <article><span>Rotación no deseada</span><strong>{summaryEmployeeRate.toFixed(2)}%</strong><small>{summaryEmployee} ceses · meta 4%</small></article>
         <article><span>Rotación deseada</span><strong>{summaryCompanyRate.toFixed(2)}%</strong><small>{summaryCompany} ceses</small></article>
@@ -393,7 +421,7 @@ export default function Home() {
 
       <section className="panel table-panel">
         <div className="panel-heading"><div><p className="kicker">DETALLE MENSUAL</p><h3>Rotación total y origen de los ceses</h3><p>La meta se evaluará después, únicamente sobre la rotación no deseada.</p></div><span className="badge">{data.length} {data.length === 1 ? "mes" : "meses"}</span></div>
-        <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ingresos</th><th>Ceses</th><th>Dotación prom.</th><th>Rotación total</th><th>No deseada N°</th><th>No deseada %</th><th>Deseada N°</th><th>Deseada %</th></tr></thead><tbody>{data.map((d) => <tr key={d.key}><td><strong>{d.month}</strong></td><td>{d.hires}</td><td>{d.exits}</td><td>{d.headcount.toLocaleString("es-PE")}</td><td><span className="rate">{d.turnover.toFixed(2)}%</span></td><td>{d.employee}</td><td><span className="worker-rate">{d.headcount ? ((d.employee / d.headcount) * 100).toFixed(2) : "0.00"}%</span></td><td>{d.company}</td><td><span className="company-rate">{d.headcount ? ((d.company / d.headcount) * 100).toFixed(2) : "0.00"}%</span></td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ingresos</th><th>Ceses</th><th>Dotación prom.</th><th>Rotación total</th><th>No deseada N°</th><th>No deseada %</th><th>Deseada N°</th><th>Deseada %</th></tr></thead><tbody>{data.map((d) => <tr key={d.key}><td><strong>{d.month}</strong></td><td>{d.hires}</td><td>{d.exits}</td><td>{displayHeadcount(d.headcount)}</td><td><span className="rate">{d.turnover.toFixed(2)}%</span></td><td>{d.employee}</td><td><span className="worker-rate">{d.headcount ? ((d.employee / d.headcount) * 100).toFixed(2) : "0.00"}%</span></td><td>{d.company}</td><td><span className="company-rate">{d.headcount ? ((d.company / d.headcount) * 100).toFixed(2) : "0.00"}%</span></td></tr>)}</tbody></table></div>
       </section>
 
       <section className="worker-analysis panel">
@@ -402,13 +430,13 @@ export default function Home() {
           <article className="worker-rate-card"><span>Rotación no deseada</span><strong>{totals.employeeRate.toFixed(2)}%</strong><small>Promedio mensual ponderado por dotación · meta ≤ 4%</small></article>
           <article><span>Deserción &lt;3 meses</span><strong>{desert3Count} <small>· {desert3Rate.toFixed(2)}%</small></strong><p>{desert3Count} salidas antes de 3 meses ÷ {hires90} ingresos de los últimos 90 días.</p></article>
           <article><span>Deserción &lt;6 meses</span><strong>{desert6Count} <small>· {desert6Rate.toFixed(2)}%</small></strong><p>{desert6Count} salidas antes de 6 meses ÷ {hires180} ingresos de los últimos 180 días.</p></article>
-          <article><span>Área de mayor impacto</span><strong className="impact-name">{impactArea?.name ?? "Sin datos"}</strong><p>{impactArea ? `${impactArea.exits} ceses · ${impactArea.rate.toFixed(2)}% de rotación · ${impactArea.contribution.toFixed(1)}% de los ceses del trabajador` : "No hay ceses por decisión del trabajador en la selección."}</p></article>
+          <article><span>Área de mayor impacto</span><strong className="impact-name">{impactArea?.name ?? "Sin datos"}</strong><p>{impactArea ? `${impactArea.exits} ceses · ${impactArea.rate.toFixed(2)}% de rotación · ${impactArea.impactPoints.toFixed(2)} pp de impacto sobre la dotación${impactArea.smallBase ? " · base pequeña" : ""}` : "No hay ceses por decisión del trabajador en la selección."}</p></article>
         </div>
       </section>
 
       <section className="review-panel panel">
-        <div className="panel-heading"><div><p className="kicker">FOCO DE GESTIÓN</p><h3>Principales áreas a revisar</h3><p>Áreas con más ceses por decisión del trabajador en el último mes mostrado.</p></div><span className="period-chip">{currentMonth.month}</span></div>
-        <div className="review-table"><div className="review-head"><span>Área</span><span>Dotación</span><span>Ceses no deseados</span><span>Rotación</span><span>Variación mensual</span></div>{reviewAreas.length ? reviewAreas.map((item) => <article key={item.area} className="review-row"><div><strong>{item.area}</strong><small>{item.group}</small></div><span>{item.headcount.toLocaleString("es-PE")}</span><span>{item.exits}</span><span><b className={item.rate > MONTHLY_TARGET ? "review-alert" : "review-ok"}>{item.rate.toFixed(2)}%</b></span><span>{item.variation === null ? <b className="review-neutral">Sin base</b> : <b className={item.variation > 0 ? "review-alert" : "review-ok"}>{item.variation > 0 ? "↗" : item.variation < 0 ? "↘" : "→"} {Math.abs(item.variation).toFixed(2)} pp</b>}</span></article>) : <p className="empty-review">No hay ceses por decisión del trabajador en el último mes seleccionado.</p>}</div>
+        <div className="panel-heading"><div><p className="kicker">FOCO DE GESTIÓN</p><h3>Principales áreas a revisar</h3><p>Se prioriza el impacto sobre la dotación total y el volumen de ceses. Las áreas con menos de {SMALL_AREA_THRESHOLD} personas se identifican como base pequeña para evitar sobredimensionar una salida aislada.</p></div><span className="period-chip">{currentMonth.month}</span></div>
+        <div className="review-table"><div className="review-head"><span>Área</span><span>Dotación</span><span>Ceses no deseados</span><span>Rotación</span><span>Variación mensual</span></div>{reviewAreas.length ? reviewAreas.map((item) => <article key={item.area} className="review-row"><div><strong>{item.area}</strong><small>{item.group} · {item.priority} · impacto {item.impactPoints.toFixed(2)} pp</small></div><span>{displayHeadcount(item.headcount)}</span><span>{item.exits}</span><span><b className={item.smallBase ? "review-neutral" : item.rate > MONTHLY_TARGET ? "review-alert" : "review-ok"}>{item.rate.toFixed(2)}%</b></span><span>{item.variation === null ? <b className="review-neutral">Sin base</b> : <b className={item.variation > 0 ? "review-alert" : "review-ok"}>{item.variation > 0 ? "↗" : item.variation < 0 ? "↘" : "→"} {Math.abs(item.variation).toFixed(2)} pp</b>}</span></article>) : <p className="empty-review">No hay ceses por decisión del trabajador en el último mes seleccionado.</p>}</div>
       </section>
 
       <section className="panel heatmap-panel">
@@ -418,10 +446,10 @@ export default function Home() {
           <div className="heat-corner">Gerencia ↓ / Región →</div>{MACRO_REGIONS.map((region) => <div className="heat-region" key={region}>{region}</div>)}
           {heatmapMatrix.length ? heatmapMatrix.map((item) => <div className="heat-row" key={item.area} style={{ display: "contents" }}><div className="heat-area heat-area-label">{item.area}</div>{item.values.map((value) => <button key={`${item.area}-${value.region}`} type="button" disabled={!value.metric} className={!value.metric ? "heat-cell empty" : value.metric.rate <= MONTHLY_TARGET ? "heat-cell good" : "heat-cell alert"} onClick={() => value.metric && setHeatmapFocus({ area: item.area, region: value.region })}>{value.metric ? `${value.metric.rate.toFixed(2)}%` : "—"}</button>)}</div>) : <div className="heat-cell empty">Sin información</div>}
         </div></div>
-        {heatmapFocus && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR CIUDAD · {heatmapPeriodLabel.toUpperCase()}</p><h3>{heatmapFocus.area} · Región {heatmapFocus.region}</h3></div><button onClick={() => setHeatmapFocus(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Ciudad</th><th>Dotación promedio</th><th>Ceses no deseados</th><th>{period === "Todos los periodos" ? "Rotación promedio" : "Rotación del mes"}</th><th>Evaluación</th></tr></thead><tbody>{cityFocus.length ? cityFocus.map((item) => <tr key={item.city}><td><strong>{item.city}</strong></td><td>{item.metric?.headcount.toLocaleString("es-PE") ?? "—"}</td><td>{item.metric?.employee ?? "—"}</td><td><span className="worker-rate">{item.metric ? `${item.metric.rate.toFixed(2)}%` : "—"}</span></td><td><span className={!item.metric ? "review-neutral" : item.metric.rate <= MONTHLY_TARGET ? "review-ok" : "review-alert"}>{!item.metric ? "Sin información" : item.metric.rate <= MONTHLY_TARGET ? "Dentro de meta" : "Requiere foco"}</span></td></tr>) : <tr><td colSpan={5}>No hay ciudades disponibles para esta selección.</td></tr>}</tbody></table></div></div>}
+        {heatmapFocus && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR CIUDAD · {heatmapPeriodLabel.toUpperCase()}</p><h3>{heatmapFocus.area} · Región {heatmapFocus.region}</h3></div><button onClick={() => setHeatmapFocus(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Ciudad</th><th>Dotación promedio</th><th>Ceses no deseados</th><th>{period === "Todos los periodos" ? "Rotación promedio" : "Rotación del mes"}</th><th>Evaluación</th></tr></thead><tbody>{cityFocus.length ? cityFocus.map((item) => <tr key={item.city}><td><strong>{item.city}</strong></td><td>{item.metric ? displayHeadcount(item.metric.headcount) : "—"}</td><td>{item.metric?.employee ?? "—"}</td><td><span className="worker-rate">{item.metric ? `${item.metric.rate.toFixed(2)}%` : "—"}</span></td><td><span className={!item.metric ? "review-neutral" : item.metric.headcount < SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "review-neutral" : item.metric.rate <= MONTHLY_TARGET ? "review-ok" : "review-alert"}>{!item.metric ? "Sin información" : item.metric.headcount < SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "Base pequeña" : item.metric.rate <= MONTHLY_TARGET ? "Dentro de meta" : "Requiere foco"}</span></td></tr>) : <tr><td colSpan={5}>No hay ciudades disponibles para esta selección.</td></tr>}</tbody></table></div></div>}
       </section>
 
-      <details className="methodology"><summary>¿Qué se calcula en cada tasa?</summary><div><p><strong>Dotación promedio mensual:</strong> (dotación al inicio del mes + dotación al cierre del mes) ÷ 2. Si no existe el mes anterior, el inicio se reconstruye con cierre − ingresos + ceses.</p><p><strong>Rotación total:</strong> ceses del periodo ÷ dotación promedio × 100. La rotación no deseada y la rotación deseada usan, respectivamente, sus ceses sobre el mismo denominador.</p><p><strong>Deserción:</strong> salidas tempranas de la ventana ÷ ingresos de la misma ventana × 100. La ventana de 3 meses usa los últimos 90 días y la de 6 meses los últimos 180 días; ambas cambian con el mes analizado.</p></div></details>
+      <details className="methodology"><summary>¿Qué se calcula en cada tasa?</summary><div><p><strong>Dotación promedio mensual:</strong> (dotación al inicio del mes + dotación al cierre del mes) ÷ 2. Para el cálculo de tasas se conserva el promedio exacto; en la visualización la dotación se redondea siempre al entero superior para expresarla como personas completas.</p><p><strong>Rotación total:</strong> ceses del periodo ÷ dotación promedio × 100. La rotación no deseada y la rotación deseada usan, respectivamente, sus ceses sobre el mismo denominador.</p><p><strong>Prioridad de gestión:</strong> el ranking considera el impacto de los ceses sobre la dotación total y el volumen de salidas. Una dotación promedio menor a {SMALL_AREA_THRESHOLD} se marca como base pequeña: conserva su tasa real, pero no se interpreta con el mismo nivel de dolor que un área grande.</p><p><strong>Deserción:</strong> salidas tempranas de la ventana ÷ ingresos de la misma ventana × 100. La ventana de 3 meses usa los últimos 90 días y la de 6 meses los últimos 180 días; ambas cambian con el mes analizado.</p></div></details>
       <footer>Fuente: planillas mensuales y términos de contrato · Último periodo: {monthLabel(latestYear, latestMonth)}</footer>
     </div>
   </main>;
