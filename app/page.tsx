@@ -24,7 +24,7 @@ type Month = {
 
 const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const MONTHLY_TARGET = 4;
-const SMALL_AREA_THRESHOLD = 10;
+const SMALL_AREA_THRESHOLD = 15;
 type DataRow = UnitRow & { y: number; hs?: number; he?: number };
 const seedData: DataRow[] = unitData.map((row) => ({ ...row, y: 2026 }));
 const MACRO_REGIONS = ["Lima", "Norte", "Sur", "Centro", "Oriente"] as const;
@@ -258,14 +258,17 @@ export default function Home() {
       const averageHeadcount = item.headcountExposure / months;
       const rate = item.headcountExposure ? item.exits / item.headcountExposure * 100 : 0;
       const impactPoints = scopeExposure ? item.exits / scopeExposure * 100 : 0;
-      const smallBase = averageHeadcount < SMALL_AREA_THRESHOLD;
+      const smallBase = averageHeadcount <= SMALL_AREA_THRESHOLD;
       return { name, exits: item.exits, headcount: averageHeadcount, rate, impactPoints, smallBase };
     }).filter((item) => item.exits > 0).sort((a, b) => b.impactPoints - a.impactPoints || b.exits - a.exits || b.rate - a.rate);
     return ranked[0] ?? null;
   }, [data, allUnits, area, group, areas, groups]);
   const reviewAreas = useMemo(() => {
     if (!currentMonth.key) return [];
-    const previousMonth = data.length > 1 ? data[data.length - 2] : null;
+    const previousYear = currentMonth.monthNumber === 1 ? currentMonth.year - 1 : currentMonth.year;
+    const previousMonthNumber = currentMonth.monthNumber === 1 ? 12 : currentMonth.monthNumber - 1;
+    const previousKey = `${previousYear}-${String(previousMonthNumber).padStart(2, "0")}`;
+    const hasPreviousPeriod = availablePeriods.includes(previousKey);
     const aggregate = (key: string) => {
       const map = new Map<string, { area: string; group: string; headcount: number; exits: number }>();
       allUnits.filter((row) => `${row.y}-${String(row.m).padStart(2, "0")}` === key && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group)).forEach((row) => {
@@ -278,14 +281,14 @@ export default function Home() {
       return map;
     };
     const current = aggregate(currentMonth.key);
-    const previous = previousMonth ? aggregate(previousMonth.key) : new Map<string, { area: string; group: string; headcount: number; exits: number }>();
+    const previous = hasPreviousPeriod ? aggregate(previousKey) : new Map<string, { area: string; group: string; headcount: number; exits: number }>();
     const scopeHeadcount = Array.from(current.values()).reduce((sum, item) => sum + item.headcount, 0);
     return Array.from(current.values()).map((item) => {
       const rate = item.headcount ? item.exits / item.headcount * 100 : 0;
       const impactPoints = scopeHeadcount ? item.exits / scopeHeadcount * 100 : 0;
       const old = previous.get(item.area);
       const oldRate = old?.headcount ? old.exits / old.headcount * 100 : null;
-      const smallBase = item.headcount < SMALL_AREA_THRESHOLD;
+      const smallBase = item.headcount <= SMALL_AREA_THRESHOLD;
       const priority = smallBase
         ? "Base pequeña"
         : rate > MONTHLY_TARGET && item.exits >= 2
@@ -297,7 +300,7 @@ export default function Home() {
               : "Controlado";
       return { ...item, rate, impactPoints, smallBase, priority, variation: oldRate === null ? null : rate - oldRate };
     }).filter((item) => item.exits > 0).sort((a, b) => b.impactPoints - a.impactPoints || b.exits - a.exits || b.rate - a.rate).slice(0, 5);
-  }, [currentMonth, data, allUnits, area, group, areas, groups]);
+  }, [currentMonth, availablePeriods, allUnits, area, group, areas, groups]);
 
   const latestPeriod = availablePeriods.filter((key) => key.startsWith(`${currentYear}-`)).at(-1) ?? `${currentYear}-01`;
   const [latestYear, latestMonth] = latestPeriod.split("-").map(Number);
@@ -435,7 +438,7 @@ export default function Home() {
       </section>
 
       <section className="review-panel panel">
-        <div className="panel-heading"><div><p className="kicker">FOCO DE GESTIÓN</p><h3>Principales áreas a revisar</h3><p>Se prioriza el impacto sobre la dotación total y el volumen de ceses. Las áreas con menos de {SMALL_AREA_THRESHOLD} personas se identifican como base pequeña para evitar sobredimensionar una salida aislada.</p></div><span className="period-chip">{currentMonth.month}</span></div>
+        <div className="panel-heading"><div><p className="kicker">FOCO DE GESTIÓN</p><h3>Principales áreas a revisar</h3><p>Se prioriza el impacto sobre la dotación total y el volumen de ceses. Las áreas con {SMALL_AREA_THRESHOLD} personas o menos se identifican como base pequeña para evitar sobredimensionar una salida aislada.</p></div><span className="period-chip">{currentMonth.month}</span></div>
         <div className="review-table"><div className="review-head"><span>Área</span><span>Dotación</span><span>Ceses no deseados</span><span>Rotación</span><span>Variación mensual</span></div>{reviewAreas.length ? reviewAreas.map((item) => <article key={item.area} className="review-row"><div><strong>{item.area}</strong><small>{item.group} · {item.priority} · impacto {item.impactPoints.toFixed(2)} pp</small></div><span>{displayHeadcount(item.headcount)}</span><span>{item.exits}</span><span><b className={item.smallBase ? "review-neutral" : item.rate > MONTHLY_TARGET ? "review-alert" : "review-ok"}>{item.rate.toFixed(2)}%</b></span><span>{item.variation === null ? <b className="review-neutral">Sin base</b> : <b className={item.variation > 0 ? "review-alert" : "review-ok"}>{item.variation > 0 ? "↗" : item.variation < 0 ? "↘" : "→"} {Math.abs(item.variation).toFixed(2)} pp</b>}</span></article>) : <p className="empty-review">No hay ceses por decisión del trabajador en el último mes seleccionado.</p>}</div>
       </section>
 
@@ -446,10 +449,10 @@ export default function Home() {
           <div className="heat-corner">Gerencia ↓ / Región →</div>{MACRO_REGIONS.map((region) => <div className="heat-region" key={region}>{region}</div>)}
           {heatmapMatrix.length ? heatmapMatrix.map((item) => <div className="heat-row" key={item.area} style={{ display: "contents" }}><div className="heat-area heat-area-label">{item.area}</div>{item.values.map((value) => <button key={`${item.area}-${value.region}`} type="button" disabled={!value.metric} className={!value.metric ? "heat-cell empty" : value.metric.rate <= MONTHLY_TARGET ? "heat-cell good" : "heat-cell alert"} onClick={() => value.metric && setHeatmapFocus({ area: item.area, region: value.region })}>{value.metric ? `${value.metric.rate.toFixed(2)}%` : "—"}</button>)}</div>) : <div className="heat-cell empty">Sin información</div>}
         </div></div>
-        {heatmapFocus && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR CIUDAD · {heatmapPeriodLabel.toUpperCase()}</p><h3>{heatmapFocus.area} · Región {heatmapFocus.region}</h3></div><button onClick={() => setHeatmapFocus(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Ciudad</th><th>Dotación promedio</th><th>Ceses no deseados</th><th>{period === "Todos los periodos" ? "Rotación promedio" : "Rotación del mes"}</th><th>Evaluación</th></tr></thead><tbody>{cityFocus.length ? cityFocus.map((item) => <tr key={item.city}><td><strong>{item.city}</strong></td><td>{item.metric ? displayHeadcount(item.metric.headcount) : "—"}</td><td>{item.metric?.employee ?? "—"}</td><td><span className="worker-rate">{item.metric ? `${item.metric.rate.toFixed(2)}%` : "—"}</span></td><td><span className={!item.metric ? "review-neutral" : item.metric.headcount < SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "review-neutral" : item.metric.rate <= MONTHLY_TARGET ? "review-ok" : "review-alert"}>{!item.metric ? "Sin información" : item.metric.headcount < SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "Base pequeña" : item.metric.rate <= MONTHLY_TARGET ? "Dentro de meta" : "Requiere foco"}</span></td></tr>) : <tr><td colSpan={5}>No hay ciudades disponibles para esta selección.</td></tr>}</tbody></table></div></div>}
+        {heatmapFocus && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR CIUDAD · {heatmapPeriodLabel.toUpperCase()}</p><h3>{heatmapFocus.area} · Región {heatmapFocus.region}</h3></div><button onClick={() => setHeatmapFocus(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Ciudad</th><th>Dotación promedio</th><th>Ceses no deseados</th><th>{period === "Todos los periodos" ? "Rotación promedio" : "Rotación del mes"}</th><th>Evaluación</th></tr></thead><tbody>{cityFocus.length ? cityFocus.map((item) => <tr key={item.city}><td><strong>{item.city}</strong></td><td>{item.metric ? displayHeadcount(item.metric.headcount) : "—"}</td><td>{item.metric?.employee ?? "—"}</td><td><span className="worker-rate">{item.metric ? `${item.metric.rate.toFixed(2)}%` : "—"}</span></td><td><span className={!item.metric ? "review-neutral" : item.metric.headcount <= SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "review-neutral" : item.metric.rate <= MONTHLY_TARGET ? "review-ok" : "review-alert"}>{!item.metric ? "Sin información" : item.metric.headcount <= SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "Base pequeña" : item.metric.rate <= MONTHLY_TARGET ? "Dentro de meta" : "Requiere foco"}</span></td></tr>) : <tr><td colSpan={5}>No hay ciudades disponibles para esta selección.</td></tr>}</tbody></table></div></div>}
       </section>
 
-      <details className="methodology"><summary>¿Qué se calcula en cada tasa?</summary><div><p><strong>Dotación promedio mensual:</strong> (dotación al inicio del mes + dotación al cierre del mes) ÷ 2. Para el cálculo de tasas se conserva el promedio exacto; en la visualización la dotación se redondea siempre al entero superior para expresarla como personas completas.</p><p><strong>Rotación total:</strong> ceses del periodo ÷ dotación promedio × 100. La rotación no deseada y la rotación deseada usan, respectivamente, sus ceses sobre el mismo denominador.</p><p><strong>Prioridad de gestión:</strong> el ranking considera el impacto de los ceses sobre la dotación total y el volumen de salidas. Una dotación promedio menor a {SMALL_AREA_THRESHOLD} se marca como base pequeña: conserva su tasa real, pero no se interpreta con el mismo nivel de dolor que un área grande.</p><p><strong>Deserción:</strong> salidas tempranas de la ventana ÷ ingresos de la misma ventana × 100. La ventana de 3 meses usa los últimos 90 días y la de 6 meses los últimos 180 días; ambas cambian con el mes analizado.</p></div></details>
+      <details className="methodology"><summary>¿Qué se calcula en cada tasa?</summary><div><p><strong>Dotación promedio mensual:</strong> (dotación al inicio del mes + dotación al cierre del mes) ÷ 2. Para el cálculo de tasas se conserva el promedio exacto; en la visualización la dotación se redondea siempre al entero superior para expresarla como personas completas.</p><p><strong>Rotación total:</strong> ceses del periodo ÷ dotación promedio × 100. La rotación no deseada y la rotación deseada usan, respectivamente, sus ceses sobre el mismo denominador.</p><p><strong>Prioridad de gestión:</strong> el ranking considera el impacto de los ceses sobre la dotación total y el volumen de salidas. Una dotación promedio de {SMALL_AREA_THRESHOLD} personas o menos se marca como base pequeña: conserva su tasa real, pero no se interpreta con el mismo nivel de dolor que un área grande.</p><p><strong>Deserción:</strong> salidas tempranas de la ventana ÷ ingresos de la misma ventana × 100. La ventana de 3 meses usa los últimos 90 días y la de 6 meses los últimos 180 días; ambas cambian con el mes analizado.</p></div></details>
       <footer>Fuente: planillas mensuales y términos de contrato · Último periodo: {monthLabel(latestYear, latestMonth)}</footer>
     </div>
   </main>;
