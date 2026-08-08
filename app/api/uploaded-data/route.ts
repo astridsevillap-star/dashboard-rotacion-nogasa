@@ -1,4 +1,4 @@
-// Batch upload API — deployment refresh 2026-08-03
+// Batch upload API — deployment refresh 2026-08-08
 import { createHash, createHmac } from "node:crypto";
 import postgres from "postgres";
 
@@ -44,35 +44,6 @@ function database(): Database {
     });
   }
   return globalThis.nogasaDatabase;
-}
-
-async function ensureSchema(sql: Database) {
-  await sql`CREATE TABLE IF NOT EXISTS uploaded_units (
-    id TEXT PRIMARY KEY, year INTEGER NOT NULL, month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
-    area TEXT NOT NULL, dotacion TEXT NOT NULL, macro_region TEXT NOT NULL DEFAULT 'SIN REGIÓN',
-    region TEXT NOT NULL, category TEXT NOT NULL, headcount INTEGER NOT NULL, hires INTEGER NOT NULL,
-    exits INTEGER NOT NULL, employee INTEGER NOT NULL, company INTEGER NOT NULL, desert3 INTEGER NOT NULL,
-    desert6 INTEGER NOT NULL, uploaded_at TIMESTAMPTZ NOT NULL, source_name TEXT NOT NULL
-  )`;
-  await sql`ALTER TABLE uploaded_units ADD COLUMN IF NOT EXISTS macro_region TEXT NOT NULL DEFAULT 'SIN REGIÓN'`;
-  await sql`ALTER TABLE uploaded_units ADD COLUMN IF NOT EXISTS headcount_start INTEGER`;
-  await sql`ALTER TABLE uploaded_units ADD COLUMN IF NOT EXISTS headcount_end INTEGER`;
-  await sql`CREATE TABLE IF NOT EXISTS uploaded_payroll (
-    id TEXT PRIMARY KEY, year INTEGER NOT NULL, month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
-    person_hash TEXT NOT NULL, hire_date TEXT NOT NULL DEFAULT '', exit_date TEXT NOT NULL DEFAULT '',
-    area TEXT NOT NULL, dotacion TEXT NOT NULL, macro_region TEXT NOT NULL, region TEXT NOT NULL,
-    category TEXT NOT NULL, uploaded_at TIMESTAMPTZ NOT NULL, source_name TEXT NOT NULL
-  )`;
-  await sql`CREATE INDEX IF NOT EXISTS uploaded_payroll_period_idx ON uploaded_payroll(year, month)`;
-  await sql`CREATE TABLE IF NOT EXISTS uploaded_terms (
-    id TEXT PRIMARY KEY, person_hash TEXT NOT NULL, term_date TEXT NOT NULL, reason TEXT NOT NULL,
-    uploaded_at TIMESTAMPTZ NOT NULL, source_name TEXT NOT NULL
-  )`;
-  await sql`CREATE INDEX IF NOT EXISTS uploaded_terms_period_idx ON uploaded_terms(term_date)`;
-  await sql`CREATE TABLE IF NOT EXISTS uploaded_sources (
-    id TEXT PRIMARY KEY, source_type TEXT NOT NULL, period_label TEXT NOT NULL, source_name TEXT NOT NULL,
-    uploaded_at TIMESTAMPTZ NOT NULL, stored_rows INTEGER NOT NULL
-  )`;
 }
 
 const safeText = (value: unknown, fallback: string, max = 180) => String(value ?? "").trim().slice(0, max) || fallback;
@@ -215,7 +186,7 @@ async function stagePayroll(sql: Database, phase: "start" | "append" | "commit",
   }
 
   const expected = Number(expectedRows);
-    if (!Number.isInteger(expected) || expected < 1 || expected > 20000) throw new Error("La cantidad esperada de filas no es válida.");
+  if (!Number.isInteger(expected) || expected < 1 || expected > 20000) throw new Error("La cantidad esperada de filas no es válida.");
   const countResult = await sql`SELECT COUNT(*)::INTEGER AS count FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
   const storedRows = Number(countResult[0]?.count ?? 0);
   if (storedRows !== expectedRows) {
@@ -295,16 +266,7 @@ async function saveLegacy(sql: Database, rows: AggregateRow[], sourceName: strin
 export async function GET() {
   try {
     const sql = database();
-    await ensureSchema(sql);
-    const periodsToRebuild = await sql`SELECT units.year,units.month,MAX(units.source_name) AS source_name
-      FROM uploaded_units units
-      WHERE (units.headcount_start IS NULL OR units.headcount_end IS NULL)
-        AND EXISTS (SELECT 1 FROM uploaded_payroll payroll WHERE payroll.year=units.year AND payroll.month=units.month)
-      GROUP BY units.year,units.month`;
-    for (const item of periodsToRebuild) {
-      const key = `${item.year}-${String(item.month).padStart(2, "0")}`;
-      await rebuildPeriod(sql, key, String(item.source_name));
-    }
+    // El esquema se administra mediante migraciones de Supabase. Este GET es solo lectura.
     const rows = await sql`SELECT year AS y,month AS m,area AS a,dotacion AS d,macro_region AS g,region AS r,category AS q,headcount AS h,COALESCE(headcount_start,headcount) AS hs,COALESCE(headcount_end,headcount) AS he,hires AS i,exits AS c,employee AS v,company AS x,desert3 AS d3,desert6 AS d6 FROM uploaded_units ORDER BY year,month,macro_region,region,area,category`;
     const uploads = await sql`SELECT "sourceType","periodLabel","sourceName","uploadedAt","storedRows" FROM (
       SELECT DISTINCT ON (source_type,period_label)
@@ -343,10 +305,11 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json() as { kind?: "payroll" | "terms"; phase?: "start" | "append" | "commit"; period?: string; expectedRows?: number; records?: PayrollRecord[] | TermRecord[]; rows?: AggregateRow[]; sourceName?: string };
     const sql = database();
-    await ensureSchema(sql);
+    // No ejecutar DDL aquí: las tablas e índices se gestionan mediante migraciones.
     const sourceName = safeText(payload.sourceName, "archivo de actualización");
     let period: string;
-    if (payload.kind === "payroll" && payload.phase) period = await stagePayroll(sql, payload.phase, safeText(payload.period, "", 7), (payload.records ?? []) as PayrollRecord[], sourceName, payload.expectedRows);\n    else if (payload.kind === "payroll") period = await savePayroll(sql, (payload.records ?? []) as PayrollRecord[], sourceName);
+    if (payload.kind === "payroll" && payload.phase) period = await stagePayroll(sql, payload.phase, safeText(payload.period, "", 7), (payload.records ?? []) as PayrollRecord[], sourceName, payload.expectedRows);
+    else if (payload.kind === "payroll") period = await savePayroll(sql, (payload.records ?? []) as PayrollRecord[], sourceName);
     else if (payload.kind === "terms") period = await saveTerms(sql, (payload.records ?? []) as TermRecord[], sourceName);
     else period = await saveLegacy(sql, payload.rows ?? [], sourceName);
     return Response.json({ ok: true, period });
