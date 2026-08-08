@@ -61,11 +61,12 @@ const dateValue = (value: unknown) => {
 const isoDay = (date: Date | null) => date ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : "";
 const macroRegionFor = (city: string, provided = "") => {
   const named = plain(provided);
+  const place = plain(city);
+  if (named.includes("LIMA") || ["LIMA","LOS OLIVOS","SAN LUIS"].some((name) => place.includes(name))) return "Lima";
   if (named.includes("NORTE")) return "Norte";
   if (named.includes("SUR")) return "Sur";
   if (named.includes("ORIENTE") || named.includes("SELVA")) return "Oriente";
   if (named.includes("CENTRO")) return "Centro";
-  const place = plain(city);
   if (["IQUITOS","PUCALLPA","TARAPOTO","MOYOBAMBA","JUANJUI","TINGO MARIA","PUERTO MALDONADO","LA MERCED"].some((name) => place.includes(name))) return "Oriente";
   if (["AREQUIPA","CUSCO","PUNO","TACNA","MOQUEGUA","ICA","AYACUCHO"].some((name) => place.includes(name))) return "Sur";
   if (["TUMBES","PIURA","SULLANA","TALARA","CHICLAYO","LAMBAYEQUE","TRUJILLO","CHIMBOTE","HUARAZ","CAJAMARCA","JAEN"].some((name) => place.includes(name))) return "Norte";
