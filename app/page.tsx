@@ -262,8 +262,9 @@ export default function Home() {
   const desert6RatePrior = hires180Prior ? (desert6CountPrior / hires180Prior) * 100 : 0;
   const hasDesertionPrior90 = desertionPeriods90Prior.length === desertionPeriods90.length && desertionPeriods90.length > 0;
   const hasDesertionPrior180 = desertionPeriods180Prior.length === desertionPeriods180.length && desertionPeriods180.length > 0;
-  const desertionWindowLabel90 = desertionPeriods90.map((row) => row.month).join(", ");
-  const desertionWindowLabel180 = desertionPeriods180.map((row) => row.month).join(", ");
+  const rangeLabel = (rows: Month[]) => !rows.length ? "" : rows.length === 1 ? rows[0].month : `${rows[0].month} a ${rows[rows.length - 1].month}`;
+  const desertionWindowLabel90 = rangeLabel(desertionPeriods90);
+  const desertionWindowLabel180 = rangeLabel(desertionPeriods180);
   const priorYearTotals = useMemo(() => {
     const rows = data.map((row) => benchmarkByMonth.get(row.monthNumber)).filter((row): row is Month => Boolean(row));
     const headcountExposure = rows.reduce((sum, row) => sum + row.headcount, 0);
@@ -450,11 +451,6 @@ export default function Home() {
         </article>
       </section>
 
-      <section className="panel table-panel">
-        <div className="panel-heading"><div><p className="kicker">DETALLE MENSUAL</p><h3>Rotación total y no deseada</h3><p>La meta se evalúa únicamente sobre la rotación no deseada.</p></div><span className="badge">{data.length} {data.length === 1 ? "mes" : "meses"}</span></div>
-        <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ingresos</th><th>Ceses</th><th>Dotación prom.</th><th>Rotación total</th><th>No deseada N°</th><th>No deseada %</th></tr></thead><tbody>{data.map((d) => <tr key={d.key}><td><strong>{d.month}</strong></td><td>{d.hires}</td><td>{d.exits}</td><td>{displayHeadcount(d.headcount)}</td><td><span className="rate">{d.turnover.toFixed(2)}%</span></td><td>{d.employee}</td><td><span className="worker-rate">{d.headcount ? ((d.employee / d.headcount) * 100).toFixed(2) : "0.00"}%</span></td></tr>)}</tbody></table></div>
-      </section>
-
       <section className="worker-analysis panel">
         <div className="panel-heading"><div><p className="kicker">ANÁLISIS DE ROTACIÓN NO DESEADA Y DESERCIÓN</p><h3>Meta, deserción e impacto organizacional</h3><p>La referencia mensual de 4% se compara exclusivamente con los ceses por decisión del trabajador.</p></div><span className={totals.employeeRate <= MONTHLY_TARGET ? "goal-ok" : "goal-alert"}>{totals.employeeRate <= MONTHLY_TARGET ? "Dentro de meta" : "Supera la meta"}</span></div>
         <div className="worker-analysis-grid">
@@ -493,6 +489,11 @@ export default function Home() {
           {heatmapMatrix.length ? heatmapMatrix.map((item) => <div className="heat-row" key={item.area} style={{ display: "contents" }}><div className="heat-area heat-area-label">{item.area}</div>{item.values.map((value) => <button key={`${item.area}-${value.region}`} type="button" disabled={!value.metric} className={!value.metric ? "heat-cell empty" : value.metric.rate <= MONTHLY_TARGET ? "heat-cell good" : "heat-cell alert"} onClick={() => value.metric && setHeatmapFocus({ area: item.area, region: value.region })}>{value.metric ? `${value.metric.rate.toFixed(2)}%` : "—"}</button>)}</div>) : <div className="heat-cell empty">Sin información</div>}
         </div></div>
         {heatmapFocus && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR CIUDAD · {heatmapPeriodLabel.toUpperCase()}</p><h3>{heatmapFocus.area} · Región {heatmapFocus.region}</h3></div><button onClick={() => setHeatmapFocus(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Ciudad</th><th>Dotación promedio</th><th>Ceses no deseados</th><th>{effectivePeriod === "Todos los periodos" ? "Rotación promedio" : "Rotación del mes"}</th><th>Evaluación</th></tr></thead><tbody>{cityFocus.length ? cityFocus.map((item) => <tr key={item.city}><td><strong>{item.city}</strong></td><td>{item.metric ? displayHeadcount(item.metric.headcount) : "—"}</td><td>{item.metric?.employee ?? "—"}</td><td><span className="worker-rate">{item.metric ? `${item.metric.rate.toFixed(2)}%` : "—"}</span></td><td><span className={!item.metric ? "review-neutral" : item.metric.headcount <= SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "review-neutral" : item.metric.rate <= MONTHLY_TARGET ? "review-ok" : "review-alert"}>{!item.metric ? "Sin información" : item.metric.headcount <= SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "Base pequeña" : item.metric.rate <= MONTHLY_TARGET ? "Dentro de meta" : "Requiere foco"}</span></td></tr>) : <tr><td colSpan={5}>No hay ciudades disponibles para esta selección.</td></tr>}</tbody></table></div></div>}
+      </section>
+
+      <section className="panel table-panel">
+        <div className="panel-heading"><div><p className="kicker">DETALLE MENSUAL</p><h3>Rotación total y no deseada</h3><p>La meta se evalúa únicamente sobre la rotación no deseada. Columna final: variación vs. el mismo mes de {comparisonYear}.</p></div><span className="badge">{data.length} {data.length === 1 ? "mes" : "meses"}</span></div>
+        <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ingresos</th><th>Ceses</th><th>Dotación prom.</th><th>Rotación total</th><th>No deseada N°</th><th>No deseada %</th><th>vs. {comparisonYear}</th></tr></thead><tbody>{data.map((d) => { const priorRow = benchmarkByMonth.get(d.monthNumber); const priorRate = priorRow && priorRow.headcount ? (priorRow.employee / priorRow.headcount) * 100 : null; const currentRate = d.headcount ? (d.employee / d.headcount) * 100 : 0; const delta = priorRate === null ? null : currentRate - priorRate; return <tr key={d.key}><td><strong>{d.month}</strong></td><td>{d.hires}</td><td>{d.exits}</td><td>{displayHeadcount(d.headcount)}</td><td><span className="rate">{d.turnover.toFixed(2)}%</span></td><td>{d.employee}</td><td><span className="worker-rate">{currentRate.toFixed(2)}%</span></td><td>{delta === null ? <span className="review-neutral">Sin base</span> : <b className={delta > 0 ? "review-alert" : "review-ok"}>{delta > 0 ? "↗" : delta < 0 ? "↘" : "→"} {Math.abs(delta).toFixed(2)} pp</b>}</td></tr>; })}</tbody></table></div>
       </section>
 
       <MonthlyUploader onUploaded={refreshUploaded} />
