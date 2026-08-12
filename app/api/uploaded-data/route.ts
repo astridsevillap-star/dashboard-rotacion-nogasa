@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type AggregateRow = { y:number;m:number;a:string;d:string;g?:string;r:string;q:string;h:number;hs?:number;he?:number;i:number;c:number;v:number;x:number;d3:number;d6:number };
-type PayrollRecord = { personHash:string;period:string;hireDate:string;exitDate:string;area:string;dotacion:string;macroRegion:string;region:string;category:string };
+type PayrollRecord = { personHash:string;personName?:string;period:string;hireDate:string;exitDate:string;area:string;dotacion:string;macroRegion:string;region:string;category:string };
 type TermRecord = { personHash:string;termDate:string;reason:string };
 
 const monthNames = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -94,6 +94,7 @@ async function stagePayroll(sql: Database, phase: "start" | "append" | "commit",
         year,
         month,
         person_hash: personHash,
+        person_name: safeText(record.personName, "", 180) || null,
         hire_date: record.hireDate,
         exit_date: record.exitDate,
         area: safeText(record.area, "SIN ÁREA"),
@@ -106,9 +107,9 @@ async function stagePayroll(sql: Database, phase: "start" | "append" | "commit",
       };
     });
     await sql`INSERT INTO uploaded_payroll ${sql(values,
-      "id","year","month","person_hash","hire_date","exit_date","area","dotacion","macro_region","region","category","uploaded_at","source_name"
+      "id","year","month","person_hash","person_name","hire_date","exit_date","area","dotacion","macro_region","region","category","uploaded_at","source_name"
     )} ON CONFLICT (id) DO UPDATE SET
-      hire_date=EXCLUDED.hire_date,exit_date=EXCLUDED.exit_date,area=EXCLUDED.area,
+      person_name=EXCLUDED.person_name,hire_date=EXCLUDED.hire_date,exit_date=EXCLUDED.exit_date,area=EXCLUDED.area,
       dotacion=EXCLUDED.dotacion,macro_region=EXCLUDED.macro_region,region=EXCLUDED.region,
       category=EXCLUDED.category,uploaded_at=EXCLUDED.uploaded_at,source_name=EXCLUDED.source_name`;
     return period;
@@ -144,13 +145,14 @@ async function savePayroll(sql: Database, records: PayrollRecord[], sourceName: 
     const personHash = protectedPersonHash(record.personHash);
     return {
       id: recordId([record.period, personHash]), year, month, person_hash: personHash,
+      person_name: safeText(record.personName, "", 180) || null,
       hire_date: record.hireDate, exit_date: record.exitDate, area, dotacion, macro_region: macroRegion,
       region, category, uploaded_at: uploadedAt, source_name: sourceName,
     };
   });
   await sql`DELETE FROM uploaded_payroll WHERE year=${year} AND month=${month}`;
   await sql`INSERT INTO uploaded_payroll ${sql(values,
-    "id","year","month","person_hash","hire_date","exit_date","area","dotacion","macro_region","region","category","uploaded_at","source_name"
+    "id","year","month","person_hash","person_name","hire_date","exit_date","area","dotacion","macro_region","region","category","uploaded_at","source_name"
   )}`;
   await rebuildPeriod(sql, periods[0], sourceName);
   await replaceSource(sql, "Planilla", periods[0], sourceName, uploadedAt, records.length);
