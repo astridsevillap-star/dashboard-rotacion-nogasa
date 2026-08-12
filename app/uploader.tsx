@@ -9,6 +9,7 @@ type UploadKind = "payroll" | "terms";
 type PayrollParseResult = { records: PayrollRecord[]; periods: string[]; duplicatesResolved: number };
 type PayrollRecord = {
   personHash: string;
+  personName: string;
   period: string;
   hireDate: string;
   exitDate: string;
@@ -168,6 +169,7 @@ async function payrollRecords(file: File): Promise<PayrollParseResult> {
     }
     return {
       personHash: hashes.get(identifier)!,
+      personName: text(valueFor(row, ["NOMBRES Y APELLIDOS", "APELLIDOS Y NOMBRES", "NOMBRE COMPLETO", "TRABAJADOR", "COLABORADOR", "NOMBRES", "APELLIDOS"])),
       period,
       hireDate: isoDay(dateValue(valueFor(row, ["FECHA INGRESO", "FECHA DE INGRESO", "FECHA INICIO"]))),
       exitDate: isoDay(dateValue(valueFor(row, ["FECHA CESE", "FECHA DE CESE", "FECHA TÉRMINO TRABAJO"]))),

@@ -64,3 +64,14 @@
 .qa-ok{color:#087451;background:#e7f8f1}
 .qa-warning{color:#8a5a00;background:#fff4d6}
 .qa-alert{color:#a80018;background:#fde8eb}
+
+.classification-gate{display:grid;gap:14px;max-width:360px}
+.classification-gate label{display:grid;gap:6px;color:#465b6a;font-size:.74rem;font-weight:750}
+.classification-gate input{min-height:44px;padding:9px;border:1px solid var(--border);border-radius:11px;background:#f8fafc}
+.classification-gate button{min-height:44px;padding:0 16px;border:0;border-radius:11px;color:#fff;background:var(--red);font-weight:800;cursor:pointer}
+.bucket-toggle{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.bucket-toggle button{padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--muted);font-size:.72rem;font-weight:800;cursor:pointer;white-space:nowrap}
+.bucket-toggle button:disabled{cursor:not-allowed;opacity:.5}
+.bucket-toggle button.active.alert{border-color:#f3bcc4;color:#a80016;background:#fff0f2}
+.bucket-toggle button.active.ok{border-color:#bfe9d9;color:#087451;background:#e7f8f1}
+.bucket-toggle .reset-link{border:0;background:none;color:var(--blue);font-weight:750;text-decoration:underline;padding:6px 4px}

@@ -414,6 +414,7 @@ export default function Home() {
         <div className="masthead-top">
           <div className="brand-line"><span className="brand-mark">N</span> PEOPLE ANALYTICS · NOGASA</div>
           <div className="masthead-actions">
+            <a className="header-link" href="/clasificacion">Clasificación de ceses</a>
             <a className="header-link" href="/archivos">Archivos y estructura</a>
             <p className="period-label">Periodo disponible · {availablePeriods.length ? `${monthLabel(Number(availablePeriods[0].slice(0,4)), Number(availablePeriods[0].slice(5)))}–${monthLabel(latestYear, latestMonth)}` : "Sin datos"}</p>
           </div>
@@ -424,7 +425,7 @@ export default function Home() {
             <h1>Rotación y permanencia</h1>
             <p className="masthead-subtitle">Una lectura ejecutiva de ingresos, ceses, dotación y deserción para tomar decisiones con contexto.</p>
           </div>
-          <div className="source-stamp"><span>ÚLTIMA ACTUALIZACIÓN</span><strong>14 julio 2026</strong></div>
+          <div className="source-stamp"><span>PERIODO MÁS RECIENTE</span><strong>{monthLabel(latestYear, latestMonth)}</strong></div>
         </div>
       </header>
 
