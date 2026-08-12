@@ -31,6 +31,7 @@ const monthNames = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Ag
 const payrollFields = [
   { name:"FECHA DATA",required:"Sí",format:"Fecha dd/mm/aaaa",purpose:"Periodo de la carga; debe ser igual en todas las filas." },
   { name:"DNI",required:"Sí",format:"Texto o número",purpose:"Identificador utilizado únicamente para vincular registros." },
+  { name:"NOMBRES Y APELLIDOS",required:"Recomendado",format:"Texto",purpose:"Se guarda en texto plano (a diferencia del DNI) para poder identificar a la persona en la hoja de Clasificación de ceses. Si se omite, esa persona aparecerá sin nombre en esa hoja." },
   { name:"FECHA INGRESO",required:"Sí",format:"Fecha dd/mm/aaaa",purpose:"Determina los ingresos y la antigüedad." },
   { name:"FECHA CESE",required:"No",format:"Fecha o vacío",purpose:"Completar únicamente cuando exista un cese." },
   { name:"GERENCIA / AREA",required:"Sí",format:"Texto",purpose:"Gerencia organizacional. Se recomienda utilizar GERENCIA; AREA se mantiene como alternativa." },
@@ -48,7 +49,7 @@ const termFields = [
 function downloadTemplate(kind: "payroll" | "terms") {
   const workbook = XLSX.utils.book_new();
   if (kind === "payroll") {
-    const headers = ["FECHA DATA","DNI","FECHA INGRESO","FECHA CESE","GERENCIA","DOTACIÓN","ÁREA","REGIÓN","DIVISIÓN"];
+    const headers = ["FECHA DATA","DNI","NOMBRES Y APELLIDOS","FECHA INGRESO","FECHA CESE","GERENCIA","DOTACIÓN","ÁREA","REGIÓN","DIVISIÓN"];
     const sheet = XLSX.utils.aoa_to_sheet([headers]);
     sheet["!cols"] = headers.map((header) => ({ wch: Math.max(header.length + 4, 18) }));
     XLSX.utils.book_append_sheet(workbook, sheet, "Planilla mensual");
