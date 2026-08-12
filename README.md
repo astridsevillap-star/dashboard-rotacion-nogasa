@@ -122,4 +122,5 @@ Vercel publicará automáticamente cada cambio enviado a la rama `main`.
 - No subas `.env.local` a GitHub.
 - Mantén el repositorio privado si el dashboard es de uso interno.
 - Cambia `UPLOAD_PASSWORD` desde Vercel si una persona deja de estar autorizada.
-- Los nombres y DNI no se almacenan en PostgreSQL; solo se guardan indicadores consolidados.
+- El DNI nunca se almacena: se convierte en un hash irreversible antes de salir del navegador.
+- El nombre (columna "NOMBRES Y APELLIDOS" de la Planilla) sí se guarda en texto plano en `uploaded_payroll`, únicamente para poder identificar a la persona en `/clasificacion`. Esa pantalla está protegida por `UPLOAD_PASSWORD` y no es accesible sin la clave. Si prefieres no guardar nombres, simplemente no incluyas esa columna al cargar la Planilla.
