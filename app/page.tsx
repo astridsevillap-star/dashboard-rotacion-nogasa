@@ -61,9 +61,9 @@ const smoothPath = (points: Array<{ x: number; y: number }>) => {
 
 function LineChart({ data, series, showTarget = false }: { data: Month[]; series: Array<{ key: keyof Month; color: string; label: string; format: "percent" | "count" }>; showTarget?: boolean }) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-  const width = 720;
-  const height = 230;
-  const pad = 30;
+  const width = 1180;
+  const height = 320;
+  const pad = 40;
   const values = data.flatMap((d) => series.map((s) => Number(d[s.key])));
   const max = Math.max(...values, showTarget ? MONTHLY_TARGET : 1, 1) * 1.25;
   const point = (value: number, index: number) => ({
@@ -74,13 +74,13 @@ function LineChart({ data, series, showTarget = false }: { data: Month[]; series
   return (
     <div className="chart-frame">
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Gráfico mensual" onPointerMove={(event) => { const box = event.currentTarget.getBoundingClientRect(); const x = ((event.clientX - box.left) / box.width) * width; const index = Math.round(((x - pad) / (width - pad * 2)) * Math.max(data.length - 1, 1)); setHoverIndex(Math.max(0, Math.min(data.length - 1, index))); }} onPointerLeave={() => setHoverIndex(null)}>
-        {[0, 1, 2, 3].map((i) => <line key={i} x1={pad} x2={width - pad} y1={pad + i * 48} y2={pad + i * 48} className="grid-line" />)}
+        {[0, 1, 2, 3].map((i) => <line key={i} x1={pad} x2={width - pad} y1={pad + i * 80} y2={pad + i * 80} className="grid-line" />)}
         {showTarget && <g><line x1={pad} x2={width - pad} y1={point(MONTHLY_TARGET, 0).y} y2={point(MONTHLY_TARGET, 0).y} className="target-line" /><text x={width - pad} y={point(MONTHLY_TARGET, 0).y - 7} textAnchor="end" className="target-label">Meta 4%</text></g>}
         {series.map((s) => {
           const pts = data.map((d, i) => point(Number(d[s.key]), i));
           return <g key={String(s.key)}>
-            <path d={smoothPath(pts)} fill="none" stroke={s.color} strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />
-            {pts.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={hoverIndex === i ? 7 : 5} fill="white" stroke={s.color} strokeWidth="3" />)}
+            <path d={smoothPath(pts)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+            {pts.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={hoverIndex === i ? 5 : 3} fill="white" stroke={s.color} strokeWidth="2" />)}
           </g>;
         })}
         {data.map((d, i) => <text key={d.month} x={point(0, i).x} y={height - 5} textAnchor="middle" className="axis-label">{d.month}</text>)}
