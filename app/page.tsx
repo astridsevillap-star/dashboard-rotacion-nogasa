@@ -97,6 +97,7 @@ export default function Home() {
   const [rangeMode, setRangeMode] = useState<RangeMode>("1m");
   const [area, setArea] = useState("Todas las gerencias / áreas");
   const [group, setGroup] = useState("Toda la dotación");
+  const [subArea, setSubArea] = useState("Todas las áreas");
   const [heatmapFocus, setHeatmapFocus] = useState<{ area: string; region: string } | null>(null);
   const [uploadedRows, setUploadedRows] = useState<DataRow[]>([]);
   const refreshUploaded = async () => {
@@ -124,10 +125,11 @@ export default function Home() {
   }, [uploadedRows]);
   const areas = useMemo(() => ["Todas las gerencias / áreas", ...Array.from(new Set(allUnits.map((row) => row.a))).sort()], [allUnits]);
   const groups = useMemo(() => ["Toda la dotación", ...Array.from(new Set(allUnits.map((row) => row.d))).sort()], [allUnits]);
+  const subAreas = useMemo(() => ["Todas las áreas", ...Array.from(new Set(allUnits.map((row) => row.q))).sort()], [allUnits]);
   const availablePeriods = useMemo(() => Array.from(new Set(allUnits.map((row) => `${row.y}-${String(row.m).padStart(2, "0")}`))).sort(), [allUnits]);
   const monthlyData = useMemo(() => availablePeriods.map((key, index) => {
     const [year, monthNumber] = key.split("-").map(Number);
-    const matchesFilters = (row: DataRow) => (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group);
+    const matchesFilters = (row: DataRow) => (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group) && (subArea === subAreas[0] || row.q === subArea);
     const rows = allUnits.filter((row) => row.y === year && row.m === monthNumber && matchesFilters(row));
     const hires = rows.reduce((sum, row) => sum + row.i, 0);
     const exits = rows.reduce((sum, row) => sum + row.c, 0);
@@ -296,7 +298,7 @@ export default function Home() {
   const employeeRateGap = priorYearTotals.hasData ? totals.employeeRate - priorYearTotals.employeeRate : null;
   const impactArea = useMemo(() => {
     const selectedPeriods = new Set(data.map((row) => row.key));
-    const rows = allUnits.filter((row) => selectedPeriods.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group));
+    const rows = allUnits.filter((row) => selectedPeriods.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group) && (subArea === subAreas[0] || row.q === subArea));
     const byArea = new Map<string, { exits: number; headcountExposure: number }>();
     rows.forEach((row) => {
       const value = byArea.get(row.a) ?? { exits: 0, headcountExposure: 0 };
@@ -322,7 +324,7 @@ export default function Home() {
     const previousKeys = new Set(firstIndex >= selectedPeriodKeys.length ? availablePeriods.slice(firstIndex - selectedPeriodKeys.length, firstIndex) : []);
     const aggregate = (keys: Set<string>) => {
       const map = new Map<string, { area: string; group: string; headcount: number; exits: number }>();
-      allUnits.filter((row) => keys.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group)).forEach((row) => {
+      allUnits.filter((row) => keys.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group) && (subArea === subAreas[0] || row.q === subArea)).forEach((row) => {
         const item = map.get(row.a) ?? { area: row.a, group: row.d, headcount: 0, exits: 0 };
         item.headcount += ((row.hs ?? row.h) + (row.he ?? row.h)) / 2;
         item.exits += row.v;
@@ -360,7 +362,7 @@ export default function Home() {
   const heatmapPeriods = selectedPeriodKeys;
   const heatmapPeriodSet = selectedPeriodSet;
   const heatmapPeriodLabel = isSingleMonth ? rangeLabelText : `Promedio mensual · ${heatmapPeriods.length} periodos`;
-  const geographyRows = allUnits.filter((row) => (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group));
+  const geographyRows = allUnits.filter((row) => (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group) && (subArea === subAreas[0] || row.q === subArea));
   const geographyMetric = (year: number, month: number, region: string, focusArea: string, city?: string) => {
     const matches = (row: DataRow, targetYear: number, targetMonth: number) => row.y === targetYear && row.m === targetMonth && row.a === focusArea && macroRegionFor(row) === region && (!city || row.r === city);
     const rows = geographyRows.filter((row) => matches(row, year, month));
@@ -407,7 +409,7 @@ export default function Home() {
       metric: summarizeGeography(heatmapFocus.region, heatmapFocus.area, city),
     })).filter((item) => item.metric).sort((a, b) => (b.metric?.rate ?? 0) - (a.metric?.rate ?? 0)) : [];
 
-  const reset = () => { setRangeMode("1m"); setArea(areas[0]); setGroup(groups[0]); setHeatmapFocus(null); };
+  const reset = () => { setRangeMode("1m"); setArea(areas[0]); setGroup(groups[0]); setSubArea(subAreas[0]); setHeatmapFocus(null); };
   return <main className="app-shell">
     <div className="dashboard">
       <header className="masthead">
@@ -450,6 +452,7 @@ export default function Home() {
           <div className="filters">
             <label>Gerencia / área<select value={area} onChange={(e) => { setArea(e.target.value); setHeatmapFocus(null); }}>{areas.map((v) => <option key={v}>{v}</option>)}</select></label>
             <label>Grupo de dotación<select value={group} onChange={(e) => { setGroup(e.target.value); setHeatmapFocus(null); }}>{groups.map((v) => <option key={v}>{v}</option>)}</select></label>
+            <label>Área<select value={subArea} onChange={(e) => { setSubArea(e.target.value); setHeatmapFocus(null); }}>{subAreas.map((v) => <option key={v}>{v}</option>)}</select></label>
           </div>
           <button className="reset-button" onClick={reset}>Limpiar filtros</button>
         </section>
