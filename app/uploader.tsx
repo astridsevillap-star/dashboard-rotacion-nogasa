@@ -46,6 +46,16 @@ const valueFor = (row: SheetRow, aliases: string[]) => {
   }
   return "";
 };
+// Fallback for fields whose header wording varies a lot between exports (e.g. "Nombre y Apellidos",
+// "Nombres del Colaborador", etc.): match any header that CONTAINS every one of the given fragments,
+// instead of requiring an exact alias match.
+const valueContaining = (row: SheetRow, fragments: string[]) => {
+  for (const [key, value] of Object.entries(row)) {
+    const normalizedKey = normalized(key);
+    if (fragments.every((fragment) => normalizedKey.includes(normalized(fragment))) && text(value)) return value;
+  }
+  return "";
+};
 const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
 const dateValue = (value: unknown) => {
   if (value instanceof Date) return value;
@@ -172,7 +182,7 @@ async function payrollRecords(file: File): Promise<PayrollParseResult> {
     }
     return {
       personHash: hashes.get(identifier)!,
-      personName: text(valueFor(row, ["NOMBRE", "NOMBRES Y APELLIDOS", "APELLIDOS Y NOMBRES", "NOMBRE COMPLETO", "TRABAJADOR", "COLABORADOR", "NOMBRES", "APELLIDOS"])),
+      personName: text(valueFor(row, ["NOMBRE", "NOMBRE Y APELLIDOS", "NOMBRES Y APELLIDOS", "APELLIDOS Y NOMBRES", "NOMBRE COMPLETO", "TRABAJADOR", "COLABORADOR", "NOMBRES", "APELLIDOS"]) || valueContaining(row, ["NOMBRE"])),
       period,
       hireDate: isoDay(dateValue(valueFor(row, ["FECHA INGRESO", "FECHA DE INGRESO", "FECHA INICIO"]))),
       exitDate: isoDay(dateValue(valueFor(row, ["FECHA CESE", "FECHA DE CESE", "FECHA TÉRMINO TRABAJO"]))),
