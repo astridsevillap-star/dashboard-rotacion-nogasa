@@ -172,7 +172,7 @@ async function payrollRecords(file: File): Promise<PayrollParseResult> {
     }
     return {
       personHash: hashes.get(identifier)!,
-      personName: text(valueFor(row, ["NOMBRES Y APELLIDOS", "APELLIDOS Y NOMBRES", "NOMBRE COMPLETO", "TRABAJADOR", "COLABORADOR", "NOMBRES", "APELLIDOS"])),
+      personName: text(valueFor(row, ["NOMBRE", "NOMBRES Y APELLIDOS", "APELLIDOS Y NOMBRES", "NOMBRE COMPLETO", "TRABAJADOR", "COLABORADOR", "NOMBRES", "APELLIDOS"])),
       period,
       hireDate: isoDay(dateValue(valueFor(row, ["FECHA INGRESO", "FECHA DE INGRESO", "FECHA INICIO"]))),
       exitDate: isoDay(dateValue(valueFor(row, ["FECHA CESE", "FECHA DE CESE", "FECHA TÉRMINO TRABAJO"]))),
