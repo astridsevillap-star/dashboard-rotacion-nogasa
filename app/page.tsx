@@ -323,25 +323,25 @@ export default function Home() {
     const firstIndex = availablePeriods.indexOf(selectedPeriodKeys[0]);
     const previousKeys = new Set(firstIndex >= selectedPeriodKeys.length ? availablePeriods.slice(firstIndex - selectedPeriodKeys.length, firstIndex) : []);
     const aggregate = (keys: Set<string>) => {
-      const map = new Map<string, { area: string; group: string; headcount: number; exits: number }>();
+      const map = new Map<string, { key: string; area: string; subArea: string; division: string; headcount: number; exits: number }>();
       allUnits.filter((row) => keys.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group) && (subArea === subAreas[0] || row.q === subArea)).forEach((row) => {
-        const item = map.get(row.a) ?? { area: row.a, group: row.d, headcount: 0, exits: 0 };
+        const compositeKey = `${row.a}|||${row.q}|||${row.r}`;
+        const item = map.get(compositeKey) ?? { key: compositeKey, area: row.a, subArea: row.q, division: row.r, headcount: 0, exits: 0 };
         item.headcount += ((row.hs ?? row.h) + (row.he ?? row.h)) / 2;
         item.exits += row.v;
-        if (item.group !== row.d) item.group = "Varias dotaciones";
-        map.set(row.a, item);
+        map.set(compositeKey, item);
       });
       return map;
     };
     const current = aggregate(currentKeys);
-    const previous = previousKeys.size ? aggregate(previousKeys) : new Map<string, { area: string; group: string; headcount: number; exits: number }>();
+    const previous = previousKeys.size ? aggregate(previousKeys) : new Map<string, { key: string; area: string; subArea: string; division: string; headcount: number; exits: number }>();
     const months = Math.max(currentKeys.size, 1);
     const scopeHeadcount = Array.from(current.values()).reduce((sum, item) => sum + item.headcount / months, 0);
     return Array.from(current.values()).map((item) => {
       const averageHeadcount = item.headcount / months;
       const rate = item.headcount ? item.exits / item.headcount * 100 : 0;
       const impactPoints = scopeHeadcount ? item.exits / scopeHeadcount * 100 : 0;
-      const old = previous.get(item.area);
+      const old = previous.get(item.key);
       const oldRate = old?.headcount ? old.exits / old.headcount * 100 : null;
       const smallBase = averageHeadcount <= SMALL_AREA_THRESHOLD;
       const priority = smallBase
@@ -363,8 +363,8 @@ export default function Home() {
   const heatmapPeriodSet = selectedPeriodSet;
   const heatmapPeriodLabel = isSingleMonth ? rangeLabelText : `Promedio mensual · ${heatmapPeriods.length} periodos`;
   const geographyRows = allUnits.filter((row) => (area === areas[0] || row.a === area) && (group === groups[0] || row.d === group) && (subArea === subAreas[0] || row.q === subArea));
-  const geographyMetric = (year: number, month: number, region: string, focusArea: string, city?: string) => {
-    const matches = (row: DataRow, targetYear: number, targetMonth: number) => row.y === targetYear && row.m === targetMonth && row.a === focusArea && macroRegionFor(row) === region && (!city || row.r === city);
+  const geographyMetric = (year: number, month: number, region: string, focusArea: string, city?: string, focusSubArea?: string) => {
+    const matches = (row: DataRow, targetYear: number, targetMonth: number) => row.y === targetYear && row.m === targetMonth && row.a === focusArea && macroRegionFor(row) === region && (!city || row.r === city) && (!focusSubArea || row.q === focusSubArea);
     const rows = geographyRows.filter((row) => matches(row, year, month));
     if (!rows.length) return null;
     const previousYear = month === 1 ? year - 1 : year;
@@ -382,10 +382,10 @@ export default function Home() {
     const employee = rows.reduce((sum, row) => sum + row.v, 0);
     return { headcount, employee, rate: headcount ? employee / headcount * 100 : 0 };
   };
-  const summarizeGeography = (region: string, focusArea: string, city?: string) => {
+  const summarizeGeography = (region: string, focusArea: string, city?: string, focusSubArea?: string) => {
     const metrics = heatmapPeriods.map((key) => {
       const [year, month] = key.split("-").map(Number);
-      return geographyMetric(year, month, region, focusArea, city);
+      return geographyMetric(year, month, region, focusArea, city, focusSubArea);
     }).filter((value): value is NonNullable<typeof value> => value !== null);
     if (!metrics.length) return null;
     return {
@@ -404,10 +404,15 @@ export default function Home() {
   }));
   const cityFocus = heatmapFocus ? Array.from(new Set(geographyRows
     .filter((row) => heatmapPeriodSet.has(`${row.y}-${String(row.m).padStart(2, "0")}`) && row.a === heatmapFocus.area && macroRegionFor(row) === heatmapFocus.region)
-    .map((row) => row.r))).sort().map((city) => ({
-      city,
-      metric: summarizeGeography(heatmapFocus.region, heatmapFocus.area, city),
-    })).filter((item) => item.metric).sort((a, b) => (b.metric?.rate ?? 0) - (a.metric?.rate ?? 0)) : [];
+    .map((row) => `${row.q}|||${row.r}`))).sort().map((key) => {
+      const [subAreaValue, city] = key.split("|||");
+      return {
+        key,
+        subArea: subAreaValue,
+        city,
+        metric: summarizeGeography(heatmapFocus.region, heatmapFocus.area, city, subAreaValue),
+      };
+    }).filter((item) => item.metric && item.metric.employee > 0).sort((a, b) => (b.metric?.rate ?? 0) - (a.metric?.rate ?? 0)) : [];
 
   const reset = () => { setRangeMode("1m"); setArea(areas[0]); setGroup(groups[0]); setSubArea(subAreas[0]); setHeatmapFocus(null); };
   return <main className="app-shell">
@@ -511,7 +516,7 @@ export default function Home() {
 
       <section className="review-panel panel">
         <div className="panel-heading"><div><p className="kicker">FOCO DE GESTIÓN</p><h3>Principales áreas a revisar</h3><p>Se prioriza el impacto sobre la dotación total y el volumen de ceses, dentro del rango elegido arriba. Las áreas con {SMALL_AREA_THRESHOLD} personas o menos se identifican como base pequeña para evitar sobredimensionar una salida aislada.</p></div><span className="period-chip">{rangeLabelText}</span></div>
-        <div className="review-table"><div className="review-head"><span>Área</span><span>Dotación</span><span>Ceses no deseados</span><span>Rotación</span><span>{isSingleMonth ? "Variación mensual" : "Variación vs. rango anterior"}</span></div>{reviewAreas.length ? reviewAreas.map((item) => <article key={item.area} className="review-row"><div><strong>{item.area}</strong><small>{item.group} · {item.priority} · impacto {item.impactPoints.toFixed(2)} pp</small></div><span>{displayHeadcount(item.headcount)}</span><span>{item.exits}</span><span><b className={item.smallBase ? "review-neutral" : item.rate > MONTHLY_TARGET ? "review-alert" : "review-ok"}>{item.rate.toFixed(2)}%</b></span><span>{item.variation === null ? <b className="review-neutral">Sin base</b> : <b className={item.variation > 0 ? "review-alert" : "review-ok"}>{item.variation > 0 ? "↗" : item.variation < 0 ? "↘" : "→"} {Math.abs(item.variation).toFixed(2)} pp</b>}</span></article>) : <p className="empty-review">No hay ceses por decisión del trabajador en el último mes seleccionado.</p>}</div>
+        <div className="review-table"><div className="review-head"><span>Gerencia / Área / División</span><span>Dotación</span><span>Ceses no deseados</span><span>Rotación</span><span>{isSingleMonth ? "Variación mensual" : "Variación vs. rango anterior"}</span></div>{reviewAreas.length ? reviewAreas.map((item) => <article key={item.key} className="review-row"><div><strong>{item.area}</strong><small>{item.subArea} · {item.division} · {item.priority} · impacto {item.impactPoints.toFixed(2)} pp</small></div><span>{displayHeadcount(item.headcount)}</span><span>{item.exits}</span><span><b className={item.smallBase ? "review-neutral" : item.rate > MONTHLY_TARGET ? "review-alert" : "review-ok"}>{item.rate.toFixed(2)}%</b></span><span>{item.variation === null ? <b className="review-neutral">Sin base</b> : <b className={item.variation > 0 ? "review-alert" : "review-ok"}>{item.variation > 0 ? "↗" : item.variation < 0 ? "↘" : "→"} {Math.abs(item.variation).toFixed(2)} pp</b>}</span></article>) : <p className="empty-review">No hay ceses por decisión del trabajador en el último mes seleccionado.</p>}</div>
       </section>
 
       <section className="panel heatmap-panel">
@@ -521,7 +526,7 @@ export default function Home() {
           <div className="heat-corner">Gerencia ↓ / Región →</div>{MACRO_REGIONS.map((region) => <div className="heat-region" key={region}>{region}</div>)}
           {heatmapMatrix.length ? heatmapMatrix.map((item) => <div className="heat-row" key={item.area} style={{ display: "contents" }}><div className="heat-area heat-area-label">{item.area}</div>{item.values.map((value) => <button key={`${item.area}-${value.region}`} type="button" disabled={!value.metric} className={!value.metric ? "heat-cell empty" : value.metric.rate <= MONTHLY_TARGET ? "heat-cell good" : "heat-cell alert"} onClick={() => value.metric && setHeatmapFocus({ area: item.area, region: value.region })}>{value.metric ? `${value.metric.rate.toFixed(2)}%` : "—"}</button>)}</div>) : <div className="heat-cell empty">Sin información</div>}
         </div></div>
-        {heatmapFocus && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR CIUDAD · {heatmapPeriodLabel.toUpperCase()}</p><h3>{heatmapFocus.area} · Región {heatmapFocus.region}</h3></div><button onClick={() => setHeatmapFocus(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Ciudad</th><th>Dotación promedio</th><th>Ceses no deseados</th><th>{!isSingleMonth ? "Rotación promedio" : "Rotación del mes"}</th><th>Evaluación</th></tr></thead><tbody>{cityFocus.length ? cityFocus.map((item) => <tr key={item.city}><td><strong>{item.city}</strong></td><td>{item.metric ? displayHeadcount(item.metric.headcount) : "—"}</td><td>{item.metric?.employee ?? "—"}</td><td><span className="worker-rate">{item.metric ? `${item.metric.rate.toFixed(2)}%` : "—"}</span></td><td><span className={!item.metric ? "review-neutral" : item.metric.headcount <= SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "review-neutral" : item.metric.rate <= MONTHLY_TARGET ? "review-ok" : "review-alert"}>{!item.metric ? "Sin información" : item.metric.headcount <= SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "Base pequeña" : item.metric.rate <= MONTHLY_TARGET ? "Dentro de meta" : "Requiere foco"}</span></td></tr>) : <tr><td colSpan={5}>No hay ciudades disponibles para esta selección.</td></tr>}</tbody></table></div></div>}
+        {heatmapFocus && <div className="heat-detail"><div className="heat-detail-heading"><div><p className="kicker">DETALLE POR ÁREA / DIVISIÓN · {heatmapPeriodLabel.toUpperCase()}</p><h3>{heatmapFocus.area} · Región {heatmapFocus.region}</h3></div><button onClick={() => setHeatmapFocus(null)}>Volver al mapa</button></div><div className="table-wrap"><table><thead><tr><th>Área / División</th><th>Dotación promedio</th><th>Ceses no deseados</th><th>{!isSingleMonth ? "Rotación promedio" : "Rotación del mes"}</th><th>Evaluación</th></tr></thead><tbody>{cityFocus.length ? cityFocus.map((item) => <tr key={item.key}><td><strong>{item.subArea}</strong> · {item.city}</td><td>{item.metric ? displayHeadcount(item.metric.headcount) : "—"}</td><td>{item.metric?.employee ?? "—"}</td><td><span className="worker-rate">{item.metric ? `${item.metric.rate.toFixed(2)}%` : "—"}</span></td><td><span className={!item.metric ? "review-neutral" : item.metric.headcount <= SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "review-neutral" : item.metric.rate <= MONTHLY_TARGET ? "review-ok" : "review-alert"}>{!item.metric ? "Sin información" : item.metric.headcount <= SMALL_AREA_THRESHOLD && item.metric.employee > 0 ? "Base pequeña" : item.metric.rate <= MONTHLY_TARGET ? "Dentro de meta" : "Requiere foco"}</span></td></tr>) : <tr><td colSpan={5}>No hay combinaciones de área / división con rotación no deseada en esta selección.</td></tr>}</tbody></table></div></div>}
       </section>
 
       <section className="panel table-panel">
