@@ -95,6 +95,7 @@ type RangeMode = "1m" | "3m" | "6m" | "ytd" | "all";
 
 export default function Home() {
   const [rangeMode, setRangeMode] = useState<RangeMode>("1m");
+  const [specificMonth, setSpecificMonth] = useState<string | null>(null);
   const [area, setArea] = useState("Todas las gerencias / áreas");
   const [group, setGroup] = useState("Toda la dotación");
   const [subArea, setSubArea] = useState("Todas las áreas");
@@ -187,9 +188,10 @@ export default function Home() {
   [currentYearData, benchmarkByMonth, hasBenchmark]);
   const employeeComparisonLatest = employeeComparisonData.at(-1);
   const employeeComparisonGap = hasBenchmark && employeeComparisonLatest ? employeeComparisonLatest.turnover - employeeComparisonLatest.benchmark : null;
-  const isSingleMonth = rangeMode === "1m";
+  const isSingleMonth = rangeMode === "1m" || specificMonth !== null;
   const selectedPeriodKeys = useMemo(() => {
     if (!availablePeriods.length) return [];
+    if (specificMonth) return availablePeriods.includes(specificMonth) ? [specificMonth] : [];
     if (rangeMode === "all") return availablePeriods;
     if (rangeMode === "ytd") {
       const latestYear = Number(availablePeriods[availablePeriods.length - 1].slice(0, 4));
@@ -197,7 +199,7 @@ export default function Home() {
     }
     const count = rangeMode === "1m" ? 1 : rangeMode === "3m" ? 3 : 6;
     return availablePeriods.slice(-count);
-  }, [availablePeriods, rangeMode]);
+  }, [availablePeriods, rangeMode, specificMonth]);
   const selectedPeriodSet = useMemo(() => new Set(selectedPeriodKeys), [selectedPeriodKeys]);
   const rangeLabelText = useMemo(() => {
     if (!selectedPeriodKeys.length) return "Sin datos";
@@ -335,13 +337,28 @@ export default function Home() {
     };
     const current = aggregate(currentKeys);
     const previous = previousKeys.size ? aggregate(previousKeys) : new Map<string, { key: string; area: string; subArea: string; division: string; headcount: number; exits: number }>();
+    // Fallback comparison maps: if the exact Gerencia+Área+División combo has no history,
+    // compare against the same Gerencia+Área (any división), then just the same Gerencia.
+    const previousByAreaSubArea = new Map<string, { headcount: number; exits: number }>();
+    const previousByArea = new Map<string, { headcount: number; exits: number }>();
+    Array.from(previous.values()).forEach((item) => {
+      const areaSubAreaKey = `${item.area}|||${item.subArea}`;
+      const areaSubAreaAgg = previousByAreaSubArea.get(areaSubAreaKey) ?? { headcount: 0, exits: 0 };
+      areaSubAreaAgg.headcount += item.headcount;
+      areaSubAreaAgg.exits += item.exits;
+      previousByAreaSubArea.set(areaSubAreaKey, areaSubAreaAgg);
+      const areaAgg = previousByArea.get(item.area) ?? { headcount: 0, exits: 0 };
+      areaAgg.headcount += item.headcount;
+      areaAgg.exits += item.exits;
+      previousByArea.set(item.area, areaAgg);
+    });
     const months = Math.max(currentKeys.size, 1);
     const scopeHeadcount = Array.from(current.values()).reduce((sum, item) => sum + item.headcount / months, 0);
     return Array.from(current.values()).map((item) => {
       const averageHeadcount = item.headcount / months;
       const rate = item.headcount ? item.exits / item.headcount * 100 : 0;
       const impactPoints = scopeHeadcount ? item.exits / scopeHeadcount * 100 : 0;
-      const old = previous.get(item.key);
+      const old = previous.get(item.key) ?? previousByAreaSubArea.get(`${item.area}|||${item.subArea}`) ?? previousByArea.get(item.area);
       const oldRate = old?.headcount ? old.exits / old.headcount * 100 : null;
       const smallBase = averageHeadcount <= SMALL_AREA_THRESHOLD;
       const priority = smallBase
@@ -414,7 +431,7 @@ export default function Home() {
       };
     }).filter((item) => item.metric && item.metric.employee > 0).sort((a, b) => (b.metric?.rate ?? 0) - (a.metric?.rate ?? 0)) : [];
 
-  const reset = () => { setRangeMode("1m"); setArea(areas[0]); setGroup(groups[0]); setSubArea(subAreas[0]); setHeatmapFocus(null); };
+  const reset = () => { setRangeMode("1m"); setSpecificMonth(null); setArea(areas[0]); setGroup(groups[0]); setSubArea(subAreas[0]); setHeatmapFocus(null); };
   return <main className="app-shell">
     <div className="dashboard">
       <header className="masthead">
@@ -439,12 +456,23 @@ export default function Home() {
       <section className="hero-metrics">
         <div className="section-heading"><div><p className="kicker">{isAllPeriods ? "DATOS ACUMULADOS DEL RANGO" : "INDICADORES DEL MES"}</p><h2>{rangeLabelText}</h2></div><p>{isAllPeriods ? "Los eventos se acumulan y la dotación corresponde al promedio mensual del rango." : "Último mes cargado. Usa los rangos de abajo para ampliar la vista."}</p></div>
         <div className="range-chips" role="group" aria-label="Rango de meses">
-          <button type="button" aria-pressed={rangeMode === "1m"} onClick={() => setRangeMode("1m")}>Último mes</button>
-          <button type="button" aria-pressed={rangeMode === "3m"} onClick={() => setRangeMode("3m")}>3 meses</button>
-          <button type="button" aria-pressed={rangeMode === "6m"} onClick={() => setRangeMode("6m")}>6 meses</button>
-          <button type="button" aria-pressed={rangeMode === "ytd"} onClick={() => setRangeMode("ytd")}>Año {currentYear}</button>
-          <button type="button" aria-pressed={rangeMode === "all"} onClick={() => setRangeMode("all")}>Todo</button>
+          <button type="button" aria-pressed={!specificMonth && rangeMode === "1m"} onClick={() => { setSpecificMonth(null); setRangeMode("1m"); }}>Último mes</button>
+          <button type="button" aria-pressed={!specificMonth && rangeMode === "3m"} onClick={() => { setSpecificMonth(null); setRangeMode("3m"); }}>3 meses</button>
+          <button type="button" aria-pressed={!specificMonth && rangeMode === "6m"} onClick={() => { setSpecificMonth(null); setRangeMode("6m"); }}>6 meses</button>
+          <button type="button" aria-pressed={!specificMonth && rangeMode === "ytd"} onClick={() => { setSpecificMonth(null); setRangeMode("ytd"); }}>Año {currentYear}</button>
+          <button type="button" aria-pressed={!specificMonth && rangeMode === "all"} onClick={() => { setSpecificMonth(null); setRangeMode("all"); }}>Todo</button>
+          <label className="specific-month-picker">
+            Mes específico
+            <select value={specificMonth ?? ""} onChange={(e) => setSpecificMonth(e.target.value || null)}>
+              <option value="">— Elegir —</option>
+              {availablePeriods.map((key) => {
+                const [y, m] = key.split("-").map(Number);
+                return <option key={key} value={key}>{monthLabel(y, m)}</option>;
+              })}
+            </select>
+          </label>
         </div>
+        {specificMonth && <p className="specific-month-hint">Mostrando {(() => { const [y, m] = specificMonth.split("-").map(Number); return monthLabel(y, m); })()} en todas las secciones. <button type="button" className="link-button" onClick={() => setSpecificMonth(null)}>Quitar selección</button></p>}
         <section className="metric-strip">
           <article><span>Ingresos</span><strong>{summaryHires}</strong><small>{isAllPeriods ? "eventos acumulados" : "eventos del mes"}</small></article>
           <article><span>Ceses</span><strong>{summaryExits}</strong><small>{isAllPeriods ? "eventos acumulados" : "eventos del mes"}</small></article>
@@ -516,7 +544,7 @@ export default function Home() {
 
       <section className="review-panel panel">
         <div className="panel-heading"><div><p className="kicker">FOCO DE GESTIÓN</p><h3>Principales áreas a revisar</h3><p>Se prioriza el impacto sobre la dotación total y el volumen de ceses, dentro del rango elegido arriba. Las áreas con {SMALL_AREA_THRESHOLD} personas o menos se identifican como base pequeña para evitar sobredimensionar una salida aislada.</p></div><span className="period-chip">{rangeLabelText}</span></div>
-        <div className="review-table"><div className="review-head"><span>Gerencia / Área / División</span><span>Dotación</span><span>Ceses no deseados</span><span>Rotación</span><span>{isSingleMonth ? "Variación mensual" : "Variación vs. rango anterior"}</span></div>{reviewAreas.length ? reviewAreas.map((item) => <article key={item.key} className="review-row"><div><strong>{item.area}</strong><small>{item.subArea} · {item.division} · {item.priority} · impacto {item.impactPoints.toFixed(2)} pp</small></div><span>{displayHeadcount(item.headcount)}</span><span>{item.exits}</span><span><b className={item.smallBase ? "review-neutral" : item.rate > MONTHLY_TARGET ? "review-alert" : "review-ok"}>{item.rate.toFixed(2)}%</b></span><span>{item.variation === null ? <b className="review-neutral">Sin base</b> : <b className={item.variation > 0 ? "review-alert" : "review-ok"}>{item.variation > 0 ? "↗" : item.variation < 0 ? "↘" : "→"} {Math.abs(item.variation).toFixed(2)} pp</b>}</span></article>) : <p className="empty-review">No hay ceses por decisión del trabajador en el último mes seleccionado.</p>}</div>
+        <div className="review-table"><div className="review-head"><span>Gerencia / Área / División</span><span>Dotación</span><span>Ceses no deseados</span><span>Rotación</span><span>{isSingleMonth ? "Variación mensual" : "Variación vs. rango anterior"}</span></div>{reviewAreas.length ? reviewAreas.map((item) => <article key={item.key} className="review-row"><div><strong>{item.area}</strong><small>{item.subArea} · {item.division} · {item.priority} · impacto {item.impactPoints.toFixed(2)} pp</small></div><span>{displayHeadcount(item.headcount)}</span><span>{item.exits}</span><span><b className={item.smallBase ? "review-neutral" : item.rate > MONTHLY_TARGET ? "review-alert" : "review-ok"}>{item.rate.toFixed(2)}%</b></span><span>{item.variation === null ? <b className="review-neutral">—</b> : <b className={item.variation > 0 ? "review-alert" : "review-ok"}>{item.variation > 0 ? "↗" : item.variation < 0 ? "↘" : "→"} {Math.abs(item.variation).toFixed(2)} pp</b>}</span></article>) : <p className="empty-review">No hay ceses por decisión del trabajador en el último mes seleccionado.</p>}</div>
       </section>
 
       <section className="panel heatmap-panel">
@@ -531,7 +559,7 @@ export default function Home() {
 
       <section className="panel table-panel">
         <div className="panel-heading"><div><p className="kicker">DETALLE MENSUAL</p><h3>Rotación total y no deseada</h3><p>La meta se evalúa únicamente sobre la rotación no deseada. Columna final: variación vs. el mismo mes de {comparisonYear}.</p></div><span className="badge">{data.length} {data.length === 1 ? "mes" : "meses"}</span></div>
-        <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ingresos</th><th>Ceses</th><th>Dotación prom.</th><th>Rotación total</th><th>No deseada N°</th><th>No deseada %</th><th>vs. {comparisonYear}</th></tr></thead><tbody>{data.map((d) => { const priorRow = benchmarkByMonth.get(d.monthNumber); const priorRate = priorRow && priorRow.headcount ? (priorRow.employee / priorRow.headcount) * 100 : null; const currentRate = d.headcount ? (d.employee / d.headcount) * 100 : 0; const delta = priorRate === null ? null : currentRate - priorRate; return <tr key={d.key}><td><strong>{d.month}</strong></td><td>{d.hires}</td><td>{d.exits}</td><td>{displayHeadcount(d.headcount)}</td><td><span className="rate">{d.turnover.toFixed(2)}%</span></td><td>{d.employee}</td><td><span className="worker-rate">{currentRate.toFixed(2)}%</span></td><td>{delta === null ? <span className="review-neutral">Sin base</span> : <b className={delta > 0 ? "review-alert" : "review-ok"}>{delta > 0 ? "↗" : delta < 0 ? "↘" : "→"} {Math.abs(delta).toFixed(2)} pp</b>}</td></tr>; })}</tbody></table></div>
+        <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ingresos</th><th>Ceses</th><th>Dotación prom.</th><th>Rotación total</th><th>No deseada N°</th><th>No deseada %</th><th>vs. {comparisonYear}</th></tr></thead><tbody>{data.map((d) => { const priorRow = benchmarkByMonth.get(d.monthNumber); const priorRate = priorRow && priorRow.headcount ? (priorRow.employee / priorRow.headcount) * 100 : null; const currentRate = d.headcount ? (d.employee / d.headcount) * 100 : 0; const delta = priorRate === null ? null : currentRate - priorRate; return <tr key={d.key}><td><strong>{d.month}</strong></td><td>{d.hires}</td><td>{d.exits}</td><td>{displayHeadcount(d.headcount)}</td><td><span className="rate">{d.turnover.toFixed(2)}%</span></td><td>{d.employee}</td><td><span className="worker-rate">{currentRate.toFixed(2)}%</span></td><td>{delta === null ? <span className="review-neutral">—</span> : <b className={delta > 0 ? "review-alert" : "review-ok"}>{delta > 0 ? "↗" : delta < 0 ? "↘" : "→"} {Math.abs(delta).toFixed(2)} pp</b>}</td></tr>; })}</tbody></table></div>
       </section>
 
       <MonthlyUploader onUploaded={refreshUploaded} />
