@@ -78,19 +78,22 @@ function matrixFor(sheet: XLSX.WorkSheet) {
   return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
 }
 
-function hasColumns(matrix: unknown[][], required: string[]) {
+function hasColumns(matrix: unknown[][], required: (string | string[])[]) {
   return matrix.some((row) => {
     const values = row.map((cell) => plain(text(cell)));
-    return required.every((header) => values.includes(plain(header)));
+    return required.every((header) => {
+      const alternatives = Array.isArray(header) ? header : [header];
+      return alternatives.some((alt) => values.includes(plain(alt)));
+    });
   });
 }
 
-async function rowsFor(file: File, required: string[]): Promise<SheetRow[]> {
+async function rowsFor(file: File, required: (string | string[])[]): Promise<SheetRow[]> {
   const bytes = await file.arrayBuffer();
   const book = XLSX.read(bytes, { type: "array", cellDates: true });
   const sheets = book.SheetNames.map((name) => ({ name, matrix: matrixFor(book.Sheets[name]) }));
   const target = sheets.find(({ matrix }) => hasColumns(matrix, required));
-  if (!target) throw new Error(`No se encontró una hoja con las columnas: ${required.join(", ")}.`);
+  if (!target) throw new Error(`No se encontró una hoja con las columnas: ${required.map((h) => Array.isArray(h) ? h[0] : h).join(", ")}.`);
   const headerIndex = target.matrix.findIndex((row) => hasColumns([row], required));
   const headers = target.matrix[headerIndex].map(text);
   return target.matrix
@@ -184,7 +187,7 @@ async function payrollRecords(file: File): Promise<PayrollParseResult> {
 }
 
 async function termRecords(file: File) {
-  const rows = await rowsFor(file, ["Número de Documento", "Fecha Término Trabajo", "Razón de Término"]);
+  const rows = await rowsFor(file, ["Número de Documento", ["Fecha Término Trabajo", "Fecha de Término Trabajo"], "Razón de Término"]);
   if (!rows.length) throw new Error("El archivo de Términos está vacío.");
   const identifiers = rows.map((row) => text(valueFor(row, ["Número de Documento", "N° Documento", "DNI"]))).filter(Boolean);
   if (identifiers.length !== rows.length) throw new Error("Todas las filas de Términos deben incluir Número de Documento.");
@@ -192,7 +195,7 @@ async function termRecords(file: File) {
   const unique = new Map<string, Record<string, unknown>>();
   rows.forEach((row) => {
     const identifier = text(valueFor(row, ["Número de Documento", "N° Documento", "DNI"]));
-    const termDate = isoDay(dateValue(valueFor(row, ["Fecha Término Trabajo", "Fecha de Término", "Fecha Cese"])));
+    const termDate = isoDay(dateValue(valueFor(row, ["Fecha Término Trabajo", "Fecha de Término Trabajo", "Fecha de Término", "Fecha Cese"])));
     const reason = normalized(valueFor(row, ["Razón de Término", "Razon Termino", "Motivo de Cese"]));
     if (!termDate || !reason) throw new Error("Todas las filas de Términos deben incluir fecha y razón de término válidas.");
     const record = { personHash: hashes.get(identifier), termDate, reason };
