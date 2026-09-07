@@ -1,5 +1,6 @@
 // Reclassification API — deseada/no deseada por persona, protegida por clave.
 import postgres from "postgres";
+import { requireUser } from "../../lib/server-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +49,7 @@ const reasonLabels: Record<string, string> = {
 
 // GET requiere la clave: expone nombres reales, no puede ser público.
 export async function GET(request: Request) {
+  if (!await requireUser(request)) return Response.json({ error: "Sesión requerida." }, { status: 401 });
   if (!authorized(request)) return Response.json({ error: "Clave de actualización incorrecta." }, { status: 401 });
   try {
     const sql = database();
@@ -82,6 +84,7 @@ export async function GET(request: Request) {
 
 // POST setea o limpia la reclasificación manual de un cese y recalcula el mes afectado.
 export async function POST(request: Request) {
+  if (!await requireUser(request)) return Response.json({ error: "Sesión requerida." }, { status: 401 });
   if (!authorized(request)) return Response.json({ error: "Clave de actualización incorrecta." }, { status: 401 });
   try {
     const payload = await request.json() as { id?: string; bucket?: "employee" | "company" | null };

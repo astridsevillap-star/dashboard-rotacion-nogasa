@@ -1,6 +1,7 @@
 // Batch upload API — deployment refresh 2026-08-08
 import { createHash, createHmac } from "node:crypto";
 import postgres from "postgres";
+import { requireUser } from "../../lib/server-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -199,7 +200,8 @@ async function saveLegacy(sql: Database, rows: AggregateRow[], sourceName: strin
   return `${rows[0].y}-${String(rows[0].m).padStart(2, "0")}`;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  if (!await requireUser(request)) return Response.json({ error: "Sesión requerida." }, { status: 401 });
   try {
     const sql = database();
     const rows = await sql`SELECT year AS y,month AS m,area AS a,dotacion AS d,macro_region AS g,region AS r,category AS q,headcount AS h,COALESCE(headcount_start,headcount) AS hs,COALESCE(headcount_end,headcount) AS he,hires AS i,exits AS c,employee AS v,company AS x,desert3 AS d3,desert6 AS d6 FROM uploaded_units ORDER BY year,month,macro_region,region,area,category`;
@@ -233,6 +235,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  if (!await requireUser(request)) return Response.json({ error: "Sesión requerida." }, { status: 401 });
   if (!process.env.UPLOAD_PASSWORD || request.headers.get("x-upload-password") !== process.env.UPLOAD_PASSWORD) return Response.json({ error: "Clave de actualización incorrecta." }, { status: 401 });
   try {
     const payload = await request.json() as { kind?: "payroll" | "terms"; phase?: "start" | "append" | "commit"; period?: string; expectedRows?: number; records?: PayrollRecord[] | TermRecord[]; rows?: AggregateRow[]; sourceName?: string };

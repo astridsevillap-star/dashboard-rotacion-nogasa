@@ -1,5 +1,7 @@
 "use client";
 
+import { authFetch } from "../lib/supabase";
+
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -47,7 +49,7 @@ export default function ClassificationPage() {
     setLoading(true);
     setStatus("Consultando ceses…");
     try {
-      const response = await fetch("/api/classification", { headers: { "x-upload-password": password }, cache: "no-store" });
+      const response = await authFetch("/api/classification", { headers: { "x-upload-password": password }, cache: "no-store" });
       const result = await response.json() as { rows?: Row[]; reasonLabels?: Record<string, string>; error?: string };
       if (!response.ok) throw new Error(result.error ?? "No se pudo consultar la información.");
       setRows(result.rows ?? []);
@@ -64,7 +66,7 @@ export default function ClassificationPage() {
   const setBucket = async (row: Row, bucket: "employee" | "company" | null) => {
     setSavingId(row.id);
     try {
-      const response = await fetch("/api/classification", {
+      const response = await authFetch("/api/classification", {
         method: "POST",
         headers: { "content-type": "application/json", "x-upload-password": password },
         body: JSON.stringify({ id: row.id, bucket }),

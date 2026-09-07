@@ -1,5 +1,7 @@
 "use client";
 
+import { authFetch } from "../lib/supabase";
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
@@ -79,7 +81,7 @@ export default function FilesPage() {
   const loadUploads = async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/uploaded-data", { cache: "no-store" });
+      const response = await authFetch("/api/uploaded-data", { cache: "no-store" });
       const result = await response.json() as { uploads?: UploadRecord[]; quality?: QualityRecord[]; error?: string };
       if (!response.ok) throw new Error(result.error ?? "No se pudo consultar el historial.");
       setUploads(result.uploads ?? []);
@@ -94,7 +96,7 @@ export default function FilesPage() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/uploaded-data", { cache: "no-store" })
+    authFetch("/api/uploaded-data", { cache: "no-store" })
       .then(async (response) => {
         const result = await response.json() as { uploads?: UploadRecord[]; quality?: QualityRecord[]; error?: string };
         if (!response.ok) throw new Error(result.error ?? "No se pudo consultar el historial.");
