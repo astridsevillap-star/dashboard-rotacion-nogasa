@@ -25,6 +25,29 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return () => { active = false; data.subscription.unsubscribe(); };
   }, []);
 
+  useEffect(() => {
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const requestUrl = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      const isApiRequest = requestUrl.startsWith("/api/") || requestUrl.startsWith(`${window.location.origin}/api/`);
+      if (!isApiRequest) return nativeFetch(input, init);
+
+      const { data } = await supabase.auth.getSession();
+      const headers = new Headers(input instanceof Request ? input.headers : undefined);
+      new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+      if (data.session?.access_token) headers.set("Authorization", `Bearer ${data.session.access_token}`);
+      return nativeFetch(input, { ...init, headers });
+    };
+
+    return () => {
+      window.fetch = nativeFetch;
+    };
+  }, []);
+
   async function login(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
