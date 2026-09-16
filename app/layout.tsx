@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import AuthGate from "./auth-gate";
 
 export const metadata: Metadata = {
   title: "Dashboard de Rotación | Nogasa",
@@ -17,7 +18,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body>{children}</body>
+      <body><AuthGate>{children}</AuthGate></body>
     </html>
   );
 }
