@@ -440,6 +440,7 @@ export default function Home() {
         <div className="masthead-top">
           <div className="brand-line"><span className="brand-mark">N</span> PEOPLE ANALYTICS · NOGASA</div>
           <div className="masthead-actions">
+            <a className="header-link" href="/lideres">Rotación de líderes</a>
             <a className="header-link" href="/clasificacion">Clasificación de ceses</a>
             <a className="header-link" href="/archivos">Archivos y estructura</a>
             <p className="period-label">Periodo disponible · {availablePeriods.length ? `${monthLabel(Number(availablePeriods[0].slice(0,4)), Number(availablePeriods[0].slice(5)))}–${monthLabel(latestYear, latestMonth)}` : "Sin datos"}</p>
